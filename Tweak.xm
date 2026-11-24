@@ -9,6 +9,7 @@
 - (void)dismissAnimated:(BOOL)a;
 - (void)presentAnimated:(BOOL)a;
 - (void)presentAnimated:(BOOL)a completion:(id)c;
+- (BOOL)isPresented;
 @end
 @interface CCUIModularControlCenterOverlayViewController : UIViewController
 - (void)opcc_sync;
@@ -92,22 +93,34 @@ static void OPCCScan(void) {
 }
 static void OPCCSuppressCover(BOOL on) { for (UIGestureRecognizer *g in gCoverGRs.allObjects) g.enabled = !on; }
 
-static void OPCCOpenCC(void) {
+static UILabel *gStatus;
+static void OPCCStatus(NSString *s) { OPCCLog(s); if (gStatus) gStatus.text = s; }
+static BOOL OPCCLocked(void) { id l = [objc_getClass("SBLockScreenManager") sharedInstance]; return [l respondsToSelector:@selector(isUILocked)] ? [l isUILocked] : YES; }
+static BOOL OPCCCoverPresented(void) { id c = [objc_getClass("SBCoverSheetPresentationManager") sharedInstance]; return [c respondsToSelector:@selector(isPresented)] && [c isPresented]; }
+static BOOL OPCCCCPresented(void) { id c = [objc_getClass("SBControlCenterController") sharedInstance]; return [c respondsToSelector:@selector(isPresented)] && [c isPresented]; }
+
+static void OPCCPresentCC(void) {
     id cc = [objc_getClass("SBControlCenterController") sharedInstance];
     gAllowCC = YES;
     if ([cc respondsToSelector:@selector(presentAnimated:completion:)]) [cc presentAnimated:YES completion:nil];
     else if ([cc respondsToSelector:@selector(presentAnimated:)]) [cc presentAnimated:YES];
-    OPCCLog(@"открываем CC");
-    // если шторка уведомлений всё же успела стартовать — убираем её (только когда телефон разблокирован)
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        id lock = [objc_getClass("SBLockScreenManager") sharedInstance];
-        BOOL locked = [lock respondsToSelector:@selector(isUILocked)] ? [lock isUILocked] : YES;
-        id cs = [objc_getClass("SBCoverSheetPresentationManager") sharedInstance];
-        if (!locked && [cs respondsToSelector:@selector(isPresented)] && [cs isPresented] && [cs respondsToSelector:@selector(setCoverSheetPresented:animated:withCompletion:)]) {
-            [cs setCoverSheetPresented:NO animated:NO withCompletion:nil]; OPCCLog(@"закрыли шторку уведомлений");
-        }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gAllowCC = NO; });
+}
+static void OPCCDismissCover(void) {
+    id cs = [objc_getClass("SBCoverSheetPresentationManager") sharedInstance];
+    if ([cs respondsToSelector:@selector(setCoverSheetPresented:animated:withCompletion:)]) [cs setCoverSheetPresented:NO animated:NO withCompletion:nil];
+}
+// Когда палец отпущен: если система всё же открыла уведомления — закрываем их и открываем свою шторку
+static void OPCCRescue(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        BOOL nc = OPCCCoverPresented(), cc = OPCCCCPresented(), lk = OPCCLocked();
+        OPCCStatus([NSString stringWithFormat:@"NC=%d CC=%d lock=%d", nc, cc, lk]);
+        if (cc) return;
+        if (nc && !lk) {
+            OPCCDismissCover();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ OPCCPresentCC(); OPCCStatus(@"NC закрыт, открываем CC"); });
+        } else { OPCCPresentCC(); OPCCStatus(@"открываем CC"); }
     });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gAllowCC = NO; });
 }
 
 @interface OPCCStripView : UIView { CGPoint _start; BOOL _fired; }
@@ -126,14 +139,15 @@ static void OPCCOpenCC(void) {
 - (void)touchesMoved:(NSSet *)ts withEvent:(UIEvent *)e {
     [super touchesMoved:ts withEvent:e];
     CGPoint p = [[ts anyObject] locationInView:nil]; CGFloat dy = p.y - _start.y, dx = p.x - _start.x;
-    if (!_fired && dy > 6 && dy > fabs(dx)) { _fired = YES; OPCCOpenCC(); }
+    if (!_fired && dy > 6 && dy > fabs(dx)) { _fired = YES; OPCCPresentCC(); OPCCStatus(@"свайп: просим CC"); }
 }
 - (void)finish { OPCCSuppressCover(NO); [self flash:NO]; }
-- (void)touchesEnded:(NSSet *)ts withEvent:(UIEvent *)e { [super touchesEnded:ts withEvent:e]; [self performSelector:@selector(finish) withObject:nil afterDelay:0.3]; }
+- (void)touchesEnded:(NSSet *)ts withEvent:(UIEvent *)e { [super touchesEnded:ts withEvent:e]; if (_fired) OPCCRescue(); [self performSelector:@selector(finish) withObject:nil afterDelay:0.3]; }
 - (void)touchesCancelled:(NSSet *)ts withEvent:(UIEvent *)e {
     OPCCLog(@"touchesCancelled (система забрала касание)");
     CGPoint p = [[ts anyObject] locationInView:nil];
-    if (!_fired && p.y - _start.y > 3) { _fired = YES; OPCCOpenCC(); }   // система отобрала касание — всё равно открываем свою шторку
+    if (!_fired && p.y - _start.y > 3) { _fired = YES; OPCCPresentCC(); }
+    if (_fired) OPCCRescue();   // система отобрала касание — доводим дело до конца сами
     [super touchesCancelled:ts withEvent:e]; [self performSelector:@selector(finish) withObject:nil afterDelay:0.3];
 }
 @end
@@ -145,6 +159,10 @@ static void OPCCInstallStrip(void) {
     gStrip.windowLevel = 100000; gStrip.backgroundColor = [UIColor clearColor];
     UIViewController *vc = [UIViewController new];
     OPCCStripView *sv = [[OPCCStripView alloc] initWithFrame:gStrip.bounds]; vc.view = sv; [sv flash:NO]; gStrip.rootViewController = vc;
+    if ([OPCCActions boolPref:@"debugStrip" def:YES]) {
+        gStatus = [[UILabel alloc] initWithFrame:CGRectInset(sv.bounds, 4, 0)]; gStatus.font = [UIFont boldSystemFontOfSize:8]; gStatus.textColor = [UIColor whiteColor];
+        gStatus.numberOfLines = 2; gStatus.userInteractionEnabled = NO; gStatus.text = @"OPCC готов"; [sv addSubview:gStatus];
+    }
     gStrip.hidden = NO;
     OPCCLog(@"полоса жеста установлена");
 }
