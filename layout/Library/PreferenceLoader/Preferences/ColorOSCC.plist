@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>entry</key>
+  <dict>
+    <key>cell</key><string>PSLinkCell</string>
+    <key>label</key><string>ColorOSCC</string>
+  </dict>
+  <key>title</key><string>ColorOSCC</string>
+  <key>items</key>
+  <array>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Масштаб шторки</string>
+      <key>footerText</key><string>Больше — крупнее вся шторка. Максимум ограничен высотой и шириной экрана. Применяется при следующем открытии шторки.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSliderCell</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>shadeScale</string>
+      <key>default</key><real>1.15</real>
+      <key>min</key><real>0.8</real>
+      <key>max</key><real>1.4</real>
+      <key>showValue</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Размер круглых кнопок</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSliderCell</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>buttonScale</string>
+      <key>default</key><real>1.25</real>
+      <key>min</key><real>0.9</real>
+      <key>max</key><real>1.5</real>
+      <key>showValue</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Подписи под кнопками</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>showLabels</string>
+      <key>default</key><true/>
+    </dict>
+  </array>
+</dict>
+</plist>
