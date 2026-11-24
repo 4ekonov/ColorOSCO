@@ -1,14 +1,16 @@
 #import <UIKit/UIKit.h>
 extern NSString *const OPCCDismissNotification;
 extern NSString *const OPCCReloadNotification;
-
 extern __weak id OPCCRingerControl;   // заполняется хуком SBRingerControl в Tweak.xm
 
 @interface OPCCActions : NSObject
-+ (NSUserDefaults *)prefs;
+// настройки
++ (void)syncPrefs;
 + (CGFloat)shadeScale;    // масштаб шторки
 + (CGFloat)buttonScale;   // размер круглых кнопок
 + (BOOL)showLabels;       // подписи под кнопками
++ (BOOL)shadeScaleIsSet;  // задан ли масштаб вручную (иначе подбирается под экран)
++ (BOOL)boolPref:(NSString *)key def:(BOOL)d;
 // каталог кнопок
 + (NSArray<NSString *> *)allIDs;
 + (NSArray<NSString *> *)defaultIDs;
@@ -17,7 +19,8 @@ extern __weak id OPCCRingerControl;   // заполняется хуком SBRin
 + (NSString *)titleFor:(NSString *)ident;
 + (NSString *)symbolFor:(NSString *)ident;
 + (BOOL)isDimmed:(NSString *)ident;
-+ (BOOL)stateFor:(NSString *)ident;
++ (BOOL)stateFor:(NSString *)ident;                       // быстрое чтение из кэша
++ (void)refreshStates:(void (^)(void))done;               // тяжёлые состояния читаются в фоне
 + (void)tap:(NSString *)ident;
 + (void)longPress:(NSString *)ident;
 // ползунки
@@ -28,6 +31,7 @@ extern __weak id OPCCRingerControl;   // заполняется хуком SBRin
 + (BOOL)btOn;    + (void)setBT:(BOOL)on;
 + (NSInteger)ringerMode;                 // 0 звонок, 1 вибро, 2 без звука
 + (void)setRingerMode:(NSInteger)m;
+// запуск приложений / настроек (сами плавно закрывают шторку)
 + (void)openApp:(NSString *)bundleID;
 + (void)openSettingsURL:(NSString *)url;
 @end

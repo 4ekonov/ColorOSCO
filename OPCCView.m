@@ -103,7 +103,7 @@ static void MRInit(void) {
     return [super pointInside:p withEvent:e];
 }
 - (void)tap {
-    if (_mode == 0) { Haptic(); [OPCCActions tap:_ident]; After(0.25, ^{ [self refresh]; }); }
+    if (_mode == 0) { Haptic(); [OPCCActions tap:_ident]; [self refresh]; After(0.7, ^{ [OPCCActions refreshStates:^{ [self refresh]; }]; }); }
     else if (_mode == 2 && _actionBlock) { Haptic(); _actionBlock(self); }
 }
 - (void)badgeTap { if (_actionBlock) { Haptic(); _actionBlock(self); } }
@@ -341,7 +341,7 @@ static void MRInit(void) {
 @end
 
 @implementation OPCCView {
-    UIView *_bg, *_content;
+    UIView *_bg; UIScrollView *_content; BOOL _closing;
     UILabel *_date, *_hint;
     OPCCPress *_edit, *_gear, *_more;
     OPCCTile *_wifi, *_bt, *_sim;
@@ -356,8 +356,9 @@ static void MRInit(void) {
         self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
         _u = 1.2; _B = 1.25;
         _bg = [UIView new]; _bg.backgroundColor = BG(); [self addSubview:_bg];
-        _content = [UIView new]; [self addSubview:_content];
+        _content = [UIScrollView new]; _content.showsVerticalScrollIndicator = NO; _content.delaysContentTouches = NO; _content.canCancelContentTouches = NO; _content.alwaysBounceVertical = NO; [self addSubview:_content];
         UITapGestureRecognizer *tp = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(bgTap)]; tp.delegate = self; tp.cancelsTouchesInView = NO; [_content addGestureRecognizer:tp];
+        UIPanGestureRecognizer *up = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swipeUp:)]; up.delegate = self; up.cancelsTouchesInView = NO; [self addGestureRecognizer:up];
 
         _date = [UILabel new]; _date.textColor = UIColor.whiteColor; [_content addSubview:_date];
         _hint = [UILabel new]; _hint.textColor = RGB(190,190,190); _hint.text = @"Перетащите кнопки, чтобы изменить порядок"; _hint.alpha = 0; [_content addSubview:_hint];
@@ -406,6 +407,8 @@ static void MRInit(void) {
     return v == _content || v == _scroll || v == _bg || v == self || v == _dots;
 }
 
+- (NSUInteger)pageCount { return MAX(1, (_round.count + 11) / 12); }
+
 #pragma mark раскладка
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -413,9 +416,12 @@ static void MRInit(void) {
     CGFloat S = [OPCCActions shadeScale], B = [OPCCActions buttonScale]; _B = B;
     CGFloat d = 40*B, rowH = d + 37, gridH = 10 + 3*rowH + 6;
     CGFloat topSafe = MAX(self.safeAreaInsets.top, 20);
-    CGFloat bottomRef = 350 + gridH + 14;
-    CGFloat uW = (W - 12) / 255., uH = (H - topSafe - 30) / (bottomRef - 47 + 18);
-    CGFloat u = MIN(MIN(S * W / 316., uW), uH); u = MAX(u, 0.75 * W / 316.); _u = u;
+    CGFloat u = S * W / 316.;
+    if (![OPCCActions shadeScaleIsSet]) {   // пока масштаб не задан вручную — подгоняем под высоту экрана; после настройки экран ни на что не влияет
+        CGFloat bottomRef = 350 + gridH + 14, uH = (H - topSafe - 30) / (bottomRef - 47 + 18);
+        u = MIN(u, uH);
+    }
+    u = MAX(u, 0.4 * W / 316.); _u = u;
     CGFloat cy = topSafe + 18*u;
     #define X(v) (W/2 + ((v) - 157.5)*u)
     #define Y(v) (cy + ((v) - 47)*u)
@@ -440,6 +446,8 @@ static void MRInit(void) {
     _trayTitle.font = [UIFont systemFontOfSize:12*u weight:UIFontWeightMedium]; _trayTitle.frame = CGRectMake(16*u, 10*u, 220*u, 18*u);
     _trayScroll.frame = CGRectMake(0, 34*u, 255*u, trayH - 34*u);
     [self layoutTray];
+    CGFloat bottom = MAX(CGRectGetMaxY(_tray.frame), Y(350 + gridH + 16)) + 40*u;   // если шторка выше экрана — её можно прокрутить
+    _content.contentSize = CGSizeMake(W, MAX(H, bottom));
 
     static NSDateFormatter *df;
     if (!df) { df = [NSDateFormatter new]; df.dateFormat = @"EEE, d MMM"; df.locale = [NSLocale localeWithLocaleIdentifier:@"ru_RU"]; }
@@ -459,8 +467,10 @@ static void MRInit(void) {
         r.bounds = CGRectMake(0, 0, bw, cpad + d + 30*u); r.center = CGPointMake(cxp, cyc - d/2 - cpad + (cpad + d + 30*u)/2);
         [r setNeedsLayout];
     }
-    NSUInteger pages = MAX(2, (_round.count + 11) / 12);
+    NSUInteger pages = [self pageCount];
     _scroll.contentSize = CGSizeMake(W*pages, (10 + 3*(40*B+37) + 16)*u);
+    if (!_dragging) _scroll.scrollEnabled = pages > 1;
+    if (_scroll.contentOffset.x > W*(pages-1)) _scroll.contentOffset = CGPointMake(W*(pages-1), 0);
 }
 - (void)layoutTray {
     CGFloat u = _u, B = _B, bw = 66*u, d = 40*B*u, cpad = bw*0.1; BOOL labels = [OPCCActions showLabels];
@@ -473,8 +483,9 @@ static void MRInit(void) {
 }
 - (void)layoutDots {
     CGFloat u = _u;
-    NSUInteger n = MAX(2, (_round.count + 11) / 12), cur = (NSUInteger)lround(_scroll.contentOffset.x / MAX(1, self.bounds.size.width));
+    NSUInteger n = [self pageCount], cur = (NSUInteger)lround(_scroll.contentOffset.x / MAX(1, self.bounds.size.width));
     for (UIView *v in _dots.subviews) [v removeFromSuperview];
+    if (n < 2) return;   // всё влезло на один экран — точек нет
     CGFloat d = 5*u, gap = 8*u, total = n*d + (n-1)*gap, x0 = (self.bounds.size.width - total)/2;
     for (NSUInteger i = 0; i < n; i++) {
         UIView *v = [[UIView alloc] initWithFrame:CGRectMake(x0 + i*(d+gap), 0.5*u, d, d)]; v.layer.cornerRadius = d/2;
@@ -536,7 +547,7 @@ static void MRInit(void) {
 // Перетаскивание (режим правки)
 - (NSUInteger)slotAt:(CGPoint)loc {
     CGFloat W = self.bounds.size.width, u = _u;
-    NSInteger pages = MAX(2, (NSInteger)(_round.count + 11) / 12);
+    NSInteger pages = (NSInteger)[self pageCount];
     NSInteger page = MAX(0, MIN(pages - 1, (NSInteger)floor(loc.x / W)));
     CGFloat lx = loc.x - page*W;
     NSInteger col = MAX(0, MIN(3, lround((lx - W/2) / (66.7*u) + 1.5)));
@@ -588,14 +599,30 @@ static void MRInit(void) {
 
 #pragma mark действия
 - (void)tapWifi { Haptic(); [OPCCActions setWifi:![OPCCActions wifiOn]]; After(0.4, ^{ [self refreshAll]; }); }
-- (void)lpWifi:(UILongPressGestureRecognizer *)g { if (g.state == UIGestureRecognizerStateBegan) { Haptic(); [OPCCActions openSettingsURL:@"prefs:root=WIFI"]; [self bgTap]; } }
+- (void)lpWifi:(UILongPressGestureRecognizer *)g { if (g.state == UIGestureRecognizerStateBegan) { Haptic(); [OPCCActions openSettingsURL:@"App-prefs:WIFI"]; } }
 - (void)tapBT { Haptic(); [OPCCActions setBT:![OPCCActions btOn]]; After(0.4, ^{ [self refreshAll]; }); }
-- (void)lpBT:(UILongPressGestureRecognizer *)g { if (g.state == UIGestureRecognizerStateBegan) { Haptic(); [OPCCActions openSettingsURL:@"prefs:root=Bluetooth"]; [self bgTap]; } }
-- (void)tapSIM { Haptic(); [OPCCActions openSettingsURL:@"prefs:root=MOBILE_DATA_SETTINGS_ID"]; [self bgTap]; }
+- (void)lpBT:(UILongPressGestureRecognizer *)g { if (g.state == UIGestureRecognizerStateBegan) { Haptic(); [OPCCActions openSettingsURL:@"App-prefs:Bluetooth"]; } }
+- (void)tapSIM { Haptic(); [OPCCActions openSettingsURL:@"App-prefs:MOBILE_DATA_SETTINGS_ID"]; }
 - (void)brightChanged { [OPCCActions setBrightness:_bright.value]; }
 - (void)volChanged { [OPCCActions setVolume:_vol.value]; }
-- (void)bgTap { if (self.dismissBlock) self.dismissBlock(); }
-- (void)doGear { Haptic(); [OPCCActions openApp:@"com.apple.Preferences"]; [self bgTap]; }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b { return YES; }
+// Свайп вверх по пустому месту закрывает шторку
+- (void)swipeUp:(UIPanGestureRecognizer *)g {
+    if (g.state != UIGestureRecognizerStateChanged || _closing || _dragging) return;
+    CGPoint t = [g translationInView:self];
+    if (t.y < -60 && fabs(t.y) > fabs(t.x) * 1.5) [self closeAnimated:YES];
+}
+- (void)bgTap { [self closeAnimated:YES]; }
+// Плавное закрытие: шторка уезжает вверх и гаснет, и только потом закрывается системный контроллер
+- (void)closeAnimated:(BOOL)callSystem {
+    if (_closing) return; _closing = YES;
+    CGFloat H = self.bounds.size.height;
+    [UIView animateWithDuration:0.38 delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState animations:^{
+        self->_content.transform = CGAffineTransformMakeTranslation(0, -H*0.55); self->_content.alpha = 0; self->_bg.alpha = 0;
+    } completion:^(BOOL f) { if (callSystem && self.dismissBlock) self.dismissBlock(); }];
+}
+- (void)closeForSystemDismiss { [self closeAnimated:NO]; }
+- (void)doGear { Haptic(); [OPCCActions openApp:@"com.apple.Preferences"]; }
 - (void)doMore {
     Haptic(); if (!self.presentBlock) return;
     UIAlertController *a = [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
@@ -613,15 +640,19 @@ static void MRInit(void) {
     [_bt setOn:[OPCCActions btOn] image:BTImage(18) title:@"Bluetooth" sub:nil];
     if (!_bright.tracking_) [_bright setValue:[OPCCActions brightness] animated:YES];
     if (!_vol.tracking_)    [_vol setValue:[OPCCActions volume] animated:YES];
-    [_sound refresh]; [_player refresh];
+    [_sound refresh];
     for (OPCCRound *r in _round) if (r != _dragging) [r refresh];
+    [OPCCActions refreshStates:^{ for (OPCCRound *r in self->_round) if (r != self->_dragging) [r refresh]; }];   // тяжёлое — в фоне
 }
 
 #pragma mark анимация шторки
 - (void)present {
+    _closing = NO;
     if (_editing) [self setEditing:NO animated:NO];
-    [self setNeedsLayout]; [self layoutIfNeeded]; [self refreshAll];
-    [_timer invalidate]; _timer = [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(refreshAll) userInfo:nil repeats:YES];
+    [OPCCActions syncPrefs];
+    [_content setContentOffset:CGPointZero animated:NO];
+    [self setNeedsLayout]; [self layoutIfNeeded]; [self refreshAll]; [_player refresh];
+    [_timer invalidate]; _timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshAll) userInfo:nil repeats:YES];
     CGFloat H = self.bounds.size.height;
     _bg.alpha = 0; _content.transform = CGAffineTransformMakeTranslation(0, -H*0.5); _content.alpha = 0;
     [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{

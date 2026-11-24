@@ -13,15 +13,15 @@
     <dict>
       <key>cell</key><string>PSGroupCell</string>
       <key>label</key><string>Масштаб шторки</string>
-      <key>footerText</key><string>Больше — крупнее вся шторка. Максимум ограничен высотой и шириной экрана. Применяется при следующем открытии шторки.</string>
+      <key>footerText</key><string>Больше — крупнее вся шторка. Ничем не ограничено: если шторка выше экрана, её можно прокрутить. Применяется при следующем открытии шторки.</string>
     </dict>
     <dict>
       <key>cell</key><string>PSSliderCell</string>
       <key>defaults</key><string>com.opcc.coloroscc</string>
       <key>key</key><string>shadeScale</string>
-      <key>default</key><real>1.15</real>
-      <key>min</key><real>0.8</real>
-      <key>max</key><real>1.4</real>
+      <key>default</key><real>1.1</real>
+      <key>min</key><real>0.6</real>
+      <key>max</key><real>1.6</real>
       <key>showValue</key><true/>
     </dict>
     <dict>
@@ -33,8 +33,8 @@
       <key>defaults</key><string>com.opcc.coloroscc</string>
       <key>key</key><string>buttonScale</string>
       <key>default</key><real>1.25</real>
-      <key>min</key><real>0.9</real>
-      <key>max</key><real>1.5</real>
+      <key>min</key><real>0.8</real>
+      <key>max</key><real>1.7</real>
       <key>showValue</key><true/>
     </dict>
     <dict>
@@ -45,6 +45,25 @@
       <key>label</key><string>Подписи под кнопками</string>
       <key>defaults</key><string>com.opcc.coloroscc</string>
       <key>key</key><string>showLabels</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Жесты</string>
+      <key>footerText</key><string>Свайп вниз от правой половины верхнего края открывает шторку с кнопками, от левой — стандартные уведомления. Применяется после респринга.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Шторка свайпом сверху справа</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>topRightGesture</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Отключить стандартный жест снизу</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>disableBottomGesture</string>
       <key>default</key><true/>
     </dict>
   </array>
