@@ -336,12 +336,18 @@ static void MRInit(void) {
 }
 @end
 
+@interface OPCCContentScroll : UIScrollView @end
+@implementation OPCCContentScroll
+- (BOOL)touchesShouldCancelInContentView:(UIView *)view { return ![view isKindOfClass:[OPCCSlider class]]; }
+@end
+
 #pragma mark - главный вид
 @interface OPCCView () <UIGestureRecognizerDelegate, UIScrollViewDelegate>
 @end
 
 @implementation OPCCView {
-    UIView *_bg; UIScrollView *_content; BOOL _closing;
+    UIView *_shade, *_bg; UIScrollView *_content; BOOL _closing, _panActive;
+    UIPanGestureRecognizer *_panGR; UITapGestureRecognizer *_tapGR;
     UILabel *_date, *_hint;
     OPCCPress *_edit, *_gear, *_more;
     OPCCTile *_wifi, *_bt, *_sim;
@@ -355,10 +361,11 @@ static void MRInit(void) {
     if ((self = [super initWithFrame:f])) {
         self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
         _u = 1.2; _B = 1.25;
-        _bg = [UIView new]; _bg.backgroundColor = BG(); [self addSubview:_bg];
-        _content = [UIScrollView new]; _content.showsVerticalScrollIndicator = NO; _content.delaysContentTouches = NO; _content.canCancelContentTouches = NO; _content.alwaysBounceVertical = NO; [self addSubview:_content];
-        UITapGestureRecognizer *tp = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(bgTap)]; tp.delegate = self; tp.cancelsTouchesInView = NO; [_content addGestureRecognizer:tp];
-        UIPanGestureRecognizer *up = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swipeUp:)]; up.delegate = self; up.cancelsTouchesInView = NO; [self addGestureRecognizer:up];
+        _shade = [[UIView alloc] initWithFrame:self.bounds]; _shade.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight; [self addSubview:_shade];
+        _bg = [UIView new]; _bg.backgroundColor = BG(); [_shade addSubview:_bg];
+        _content = [OPCCContentScroll new]; _content.showsVerticalScrollIndicator = NO; _content.delaysContentTouches = NO; _content.canCancelContentTouches = YES; _content.bounces = NO; _content.alwaysBounceVertical = NO; [_shade addSubview:_content];
+        UITapGestureRecognizer *tp = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(bgTap)]; tp.delegate = self; tp.cancelsTouchesInView = NO; [_content addGestureRecognizer:tp]; _tapGR = tp;
+        UIPanGestureRecognizer *up = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panClose:)]; up.delegate = self; up.cancelsTouchesInView = NO; [self addGestureRecognizer:up]; _panGR = up;
 
         _date = [UILabel new]; _date.textColor = UIColor.whiteColor; [_content addSubview:_date];
         _hint = [UILabel new]; _hint.textColor = RGB(190,190,190); _hint.text = @"Перетащите кнопки, чтобы изменить порядок"; _hint.alpha = 0; [_content addSubview:_hint];
@@ -378,7 +385,7 @@ static void MRInit(void) {
         [_vol addTarget:self action:@selector(volChanged) forControlEvents:UIControlEventValueChanged]; [_content addSubview:_vol];
         _sound = [OPCCSound new]; [_content addSubview:_sound];
 
-        _scroll = [UIScrollView new]; _scroll.pagingEnabled = YES; _scroll.showsHorizontalScrollIndicator = NO; _scroll.delegate = self; _scroll.clipsToBounds = NO; _scroll.delaysContentTouches = NO; [_content addSubview:_scroll];
+        _scroll = [UIScrollView new]; _scroll.pagingEnabled = YES; _scroll.directionalLockEnabled = YES; _scroll.bounces = NO; _scroll.showsHorizontalScrollIndicator = NO; _scroll.delegate = self; _scroll.clipsToBounds = NO; _scroll.delaysContentTouches = NO; [_content addSubview:_scroll];
         _dots = [UIView new]; _dots.userInteractionEnabled = NO; [_content addSubview:_dots];
 
         _tray = [UIView new]; _tray.backgroundColor = RGB(56,56,56); _tray.alpha = 0; [_content addSubview:_tray];
@@ -400,11 +407,23 @@ static void MRInit(void) {
     [b addSubview:iv]; [b addTarget:self action:s forControlEvents:UIControlEventTouchUpInside]; [_content addSubview:b]; return b;
 }
 
-// Тап по пустому месту закрывает шторку, тап по кнопкам — нет
+// Тап по пустому месту закрывает шторку, тап по кнопкам — нет; свайп вверх — закрытие, кроме касаний по ползункам
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t {
-    if (_editing) return NO;
+    if (_editing || _closing) return NO;
     UIView *v = t.view;
-    return v == _content || v == _scroll || v == _bg || v == self || v == _dots;
+    if (g == _tapGR) return v == _content || v == _scroll || v == _bg || v == _shade || v == self || v == _dots;
+    if (g == _panGR) return !_dragging && ![v isKindOfClass:[OPCCSlider class]];
+    return YES;
+}
+// Свайп вверх засчитываем только если он явно вертикальный и контент уже дочитан до низа
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if (g != _panGR) return [super gestureRecognizerShouldBegin:g];
+    if (_editing || _dragging || _closing) return NO;
+    CGPoint v = [_panGR velocityInView:self];
+    if (!(v.y < 0 && fabs(v.y) > fabs(v.x) * 1.3)) return NO;
+    CGFloat maxOff = _content.contentSize.height - _content.bounds.size.height;
+    if (maxOff > 1 && _content.contentOffset.y < maxOff - 2) return NO;   // ещё можно прокрутить вниз — это прокрутка, а не закрытие
+    return YES;
 }
 
 - (NSUInteger)pageCount { return MAX(1, (_round.count + 11) / 12); }
@@ -425,7 +444,7 @@ static void MRInit(void) {
     CGFloat cy = topSafe + 18*u;
     #define X(v) (W/2 + ((v) - 157.5)*u)
     #define Y(v) (cy + ((v) - 47)*u)
-    _bg.frame = self.bounds; _content.frame = self.bounds;
+    CGRect full = CGRectMake(0, 0, W, H); _bg.frame = full; _content.frame = full;
     _date.font = [UIFont systemFontOfSize:12*u]; _date.frame = CGRectMake(X(30), cy - 10*u, 130*u, 20*u);
     _hint.font = [UIFont systemFontOfSize:11*u]; _hint.frame = CGRectMake(X(30), Y(66), 255*u, 18*u);
     CGFloat cx[3] = {196,233,271}; OPCCPress *tops[3] = {_edit,_gear,_more};
@@ -448,6 +467,7 @@ static void MRInit(void) {
     [self layoutTray];
     CGFloat bottom = MAX(CGRectGetMaxY(_tray.frame), Y(350 + gridH + 16)) + 40*u;   // если шторка выше экрана — её можно прокрутить
     _content.contentSize = CGSizeMake(W, MAX(H, bottom));
+    _content.scrollEnabled = bottom > H + 1;
 
     static NSDateFormatter *df;
     if (!df) { df = [NSDateFormatter new]; df.dateFormat = @"EEE, d MMM"; df.locale = [NSLocale localeWithLocaleIdentifier:@"ru_RU"]; }
@@ -606,19 +626,28 @@ static void MRInit(void) {
 - (void)brightChanged { [OPCCActions setBrightness:_bright.value]; }
 - (void)volChanged { [OPCCActions setVolume:_vol.value]; }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)a shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)b { return YES; }
-// Свайп вверх по пустому месту закрывает шторку
-- (void)swipeUp:(UIPanGestureRecognizer *)g {
-    if (g.state != UIGestureRecognizerStateChanged || _closing || _dragging) return;
-    CGPoint t = [g translationInView:self];
-    if (t.y < -60 && fabs(t.y) > fabs(t.x) * 1.5) [self closeAnimated:YES];
+// Интерактивное закрытие: шторка едет за пальцем вверх; отпустили далеко или быстро — закрывается, иначе возвращается
+- (void)panClose:(UIPanGestureRecognizer *)g {
+    CGFloat H = MAX(1, self.bounds.size.height); CGPoint t = [g translationInView:self];
+    if (g.state == UIGestureRecognizerStateBegan) { _panActive = YES; [_shade.layer removeAllAnimations]; }
+    else if (g.state == UIGestureRecognizerStateChanged) {
+        if (!_panActive || _closing) return;
+        CGFloat ty = MIN(0, t.y);
+        _shade.transform = CGAffineTransformMakeTranslation(0, ty); _shade.alpha = 1 - MIN(1, -ty / H) * 0.7;
+    } else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled || g.state == UIGestureRecognizerStateFailed) {
+        if (!_panActive) return; _panActive = NO;
+        CGFloat vy = [g velocityInView:self].y, ty = MIN(0, t.y);
+        if (g.state == UIGestureRecognizerStateEnded && (ty < -H * 0.12 || vy < -700)) [self closeAnimated:YES];
+        else [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ self->_shade.transform = CGAffineTransformIdentity; self->_shade.alpha = 1; } completion:nil];
+    }
 }
 - (void)bgTap { [self closeAnimated:YES]; }
 // Плавное закрытие: шторка уезжает вверх и гаснет, и только потом закрывается системный контроллер
 - (void)closeAnimated:(BOOL)callSystem {
     if (_closing) return; _closing = YES;
     CGFloat H = self.bounds.size.height;
-    [UIView animateWithDuration:0.38 delay:0 options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState animations:^{
-        self->_content.transform = CGAffineTransformMakeTranslation(0, -H*0.55); self->_content.alpha = 0; self->_bg.alpha = 0;
+    [UIView animateWithDuration:0.34 delay:0 options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
+        self->_shade.transform = CGAffineTransformMakeTranslation(0, -H * 0.6); self->_shade.alpha = 0;
     } completion:^(BOOL f) { if (callSystem && self.dismissBlock) self.dismissBlock(); }];
 }
 - (void)closeForSystemDismiss { [self closeAnimated:NO]; }
@@ -654,9 +683,10 @@ static void MRInit(void) {
     [self setNeedsLayout]; [self layoutIfNeeded]; [self refreshAll]; [_player refresh];
     [_timer invalidate]; _timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshAll) userInfo:nil repeats:YES];
     CGFloat H = self.bounds.size.height;
-    _bg.alpha = 0; _content.transform = CGAffineTransformMakeTranslation(0, -H*0.5); _content.alpha = 0;
-    [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{
-        self->_bg.alpha = 1; self->_content.transform = CGAffineTransformIdentity; self->_content.alpha = 1; } completion:nil];
+    [_shade.layer removeAllAnimations]; _panActive = NO;
+    _shade.alpha = 0; _shade.transform = CGAffineTransformMakeTranslation(0, -H * 0.6);
+    [UIView animateWithDuration:0.55 delay:0 usingSpringWithDamping:0.92 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction animations:^{
+        self->_shade.alpha = 1; self->_shade.transform = CGAffineTransformIdentity; } completion:nil];
     NSMutableArray *items = [NSMutableArray arrayWithObjects:_wifi,_bt,_player,_bright,_vol,_sim,_sound,nil]; [items addObjectsFromArray:_round];
     [items enumerateObjectsUsingBlock:^(UIView *v, NSUInteger i, BOOL *s) {
         v.alpha = 0; v.transform = CGAffineTransformConcat(CGAffineTransformMakeScale(0.9, 0.9), CGAffineTransformMakeTranslation(0, -18));
