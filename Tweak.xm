@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import "OPCCView.h"
 #import "OPCCActions.h"
 
@@ -72,7 +73,8 @@ static void OPCCScan(void) {
     if (!wins) wins = [UIApplication sharedApplication].windows;
     for (UIWindow *w in wins) { if (w == gStrip) continue; OPCCCollect(w, all); }
     @try {
-        id mgr = [objc_getClass("SBSystemGestureManager") performSelector:NSSelectorFromString(@"mainDisplayManager")];
+        id mgrCls = (id)objc_getClass("SBSystemGestureManager"); SEL mdm = NSSelectorFromString(@"mainDisplayManager");
+        id mgr = [mgrCls respondsToSelector:mdm] ? ((id (*)(id, SEL))objc_msgSend)(mgrCls, mdm) : nil;
         for (NSString *k in @[@"gestureRecognizers", @"_gestureRecognizers", @"allGestureRecognizers"]) {
             @try { id arr = [mgr valueForKey:k]; if ([arr isKindOfClass:[NSArray class]]) [all addObjectsFromArray:arr]; else if ([arr isKindOfClass:[NSSet class]]) [all addObjectsFromArray:[arr allObjects]]; } @catch (__unused NSException *e) {}
         }
