@@ -547,27 +547,22 @@ static void MRInit(void) {
 }
 - (void)dragGesture:(UILongPressGestureRecognizer *)g {
     OPCCRound *r = (OPCCRound *)g.view; CGPoint loc = [g locationInView:_scroll];
-    switch (g.state) {
-        case UIGestureRecognizerStateBegan:
-            _dragging = r; _scroll.scrollEnabled = NO; [_scroll bringSubviewToFront:r];
-            _grab = CGPointMake(loc.x - r.center.x, loc.y - r.center.y); [r stopWiggle]; Haptic();
-            [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.65 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ r.transform = CGAffineTransformMakeScale(1.15, 1.15); r.alpha = 0.92; } completion:nil];
-            break;
-        case UIGestureRecognizerStateChanged: {
-            r.center = CGPointMake(loc.x - _grab.x, loc.y - _grab.y);
-            NSUInteger idx = [self slotAt:loc], cur = [_round indexOfObject:r];
-            if (idx != cur && cur != NSNotFound) {
-                [_round removeObject:r]; [_round insertObject:r atIndex:MIN(idx, _round.count)];
-                [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ [self layoutButtons]; } completion:nil];
-                Haptic();
-            }
-            break;
+    if (g.state == UIGestureRecognizerStateBegan) {
+        _dragging = r; _scroll.scrollEnabled = NO; [_scroll bringSubviewToFront:r];
+        _grab = CGPointMake(loc.x - r.center.x, loc.y - r.center.y); [r stopWiggle]; Haptic();
+        [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.65 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ r.transform = CGAffineTransformMakeScale(1.15, 1.15); r.alpha = 0.92; } completion:nil];
+    } else if (g.state == UIGestureRecognizerStateChanged) {
+        r.center = CGPointMake(loc.x - _grab.x, loc.y - _grab.y);
+        NSUInteger idx = [self slotAt:loc], cur = [_round indexOfObject:r];
+        if (idx != cur && cur != NSNotFound) {
+            [_round removeObject:r]; [_round insertObject:r atIndex:MIN(idx, _round.count)];
+            [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ [self layoutButtons]; } completion:nil];
+            Haptic();
         }
-        default:
-            _dragging = nil;
-            [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0 options:0 animations:^{ r.transform = CGAffineTransformIdentity; r.alpha = 1; [self layoutButtons]; } completion:^(BOOL f) { if (self->_editing) [r startWiggle]; }];
-            _scroll.scrollEnabled = YES; [self saveOrder];
-            break;
+    } else {
+        _dragging = nil;
+        [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0 options:0 animations:^{ r.transform = CGAffineTransformIdentity; r.alpha = 1; [self layoutButtons]; } completion:^(BOOL f) { if (self->_editing) [r startWiggle]; }];
+        _scroll.scrollEnabled = YES; [self saveOrder];
     }
 }
 
