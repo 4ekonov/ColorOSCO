@@ -35,77 +35,116 @@ static void OPCCDump(void) {
     [o writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-#pragma mark - перехват системного жеста «шторка уведомлений» в правой половине верха
-// Собираем системные recognizer'ы шторки уведомлений (CoverSheet / ScreenEdgePan) и на время касания в зоне справа сверху отключаем их.
+#pragma mark - жест: свайп вниз от правой половины верхнего края
+@interface SBCoverSheetPresentationManager : NSObject
++ (id)sharedInstance; - (BOOL)isPresented; - (void)setCoverSheetPresented:(BOOL)p animated:(BOOL)a withCompletion:(id)c;
+@end
+@interface SBLockScreenManager : NSObject
++ (id)sharedInstance; - (BOOL)isUILocked;
+@end
+
 static NSHashTable *gCoverGRs;
+static UIWindow *gStrip;
+
 static void OPCCLog(NSString *line) {
-    static int n = 0; if (n++ > 120) return;
+    static int n = 0; if (n++ > 200) return;
     NSString *path = @"/var/mobile/Documents/OPCC_gestures.txt";
     NSString *old = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] ?: @"";
     [[old stringByAppendingFormat:@"%@\n", line] writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
-static void OPCCRegister(UIGestureRecognizer *g, id target, SEL action) {
-    if (!g) return;
-    NSString *gc = NSStringFromClass([g class]), *tc = target ? NSStringFromClass([target class]) : @"", *an = action ? NSStringFromSelector(action) : @"";
-    BOOL cover = [tc containsString:@"CoverSheet"] || [gc containsString:@"CoverSheet"];
-    BOOL edge  = [gc containsString:@"SBScreenEdgePan"];
-    if (!cover && !edge) return;
-    if ([an.lowercaseString containsString:@"dismiss"]) return;
+
+// Собираем ВСЕ живые системные recognizer'ы SpringBoard (по окнам и по менеджеру жестов), а не только пойманные при создании
+static void OPCCCollect(UIView *v, NSMutableArray *out) {
+    for (UIGestureRecognizer *g in v.gestureRecognizers) [out addObject:g];
+    for (UIView *s in v.subviews) OPCCCollect(s, out);
+}
+static BOOL OPCCIsSystemGR(UIGestureRecognizer *g) {
+    NSString *gc = NSStringFromClass([g class]);
+    NSString *dc = g.delegate ? NSStringFromClass([g.delegate class]) : @"";
+    return [gc hasPrefix:@"SB"] || [gc hasPrefix:@"_SB"] || [gc hasPrefix:@"FB"] || [gc containsString:@"SystemGesture"] || [gc containsString:@"CoverSheet"]
+        || [dc hasPrefix:@"SB"] || [dc containsString:@"CoverSheet"] || [dc containsString:@"SystemGesture"];
+}
+static void OPCCScan(void) {
     if (!gCoverGRs) gCoverGRs = [NSHashTable weakObjectsHashTable];
-    if (![gCoverGRs containsObject:g]) { [gCoverGRs addObject:g]; OPCCLog([NSString stringWithFormat:@"%@ | target=%@ | action=%@", gc, tc, an]); }
-}
-static void OPCCSuppressCover(BOOL on) {
-    for (UIGestureRecognizer *g in gCoverGRs.allObjects) g.enabled = !on;
-}
-
-%hook UIGestureRecognizer
-- (id)initWithTarget:(id)t action:(SEL)a { id r = %orig; OPCCRegister(r, t, a); return r; }
-- (void)addTarget:(id)t action:(SEL)a { %orig; OPCCRegister(self, t, a); }
-%end
-
-#pragma mark - жест: свайп вниз от правой половины верхнего края
-@interface OPCCStripView : UIView @end
-@implementation OPCCStripView
-- (void)touchesBegan:(NSSet *)t withEvent:(UIEvent *)e {
-    OPCCSuppressCover(YES);                    // глушим шторку уведомлений, пока палец в нашей зоне
-    [super touchesBegan:t withEvent:e];
-}
-- (void)restore { OPCCSuppressCover(NO); }
-- (void)touchesEnded:(NSSet *)t withEvent:(UIEvent *)e { [super touchesEnded:t withEvent:e]; [self performSelector:@selector(restore) withObject:nil afterDelay:0.25]; }
-- (void)touchesCancelled:(NSSet *)t withEvent:(UIEvent *)e { [super touchesCancelled:t withEvent:e]; [self performSelector:@selector(restore) withObject:nil afterDelay:0.25]; }
-@end
-
-@interface OPCCStripHandler : NSObject
-@property (nonatomic) BOOL fired;
-- (void)pan:(UIPanGestureRecognizer *)g;
-@end
-@implementation OPCCStripHandler
-- (void)pan:(UIPanGestureRecognizer *)g {
-    if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled || g.state == UIGestureRecognizerStateFailed) { self.fired = NO; return; }
-    if (g.state != UIGestureRecognizerStateChanged || self.fired) return;
-    CGPoint t = [g translationInView:g.view];
-    if (t.y > 18 && t.y > fabs(t.x)) {
-        self.fired = YES;
-        id cc = [objc_getClass("SBControlCenterController") sharedInstance];
-        gAllowCC = YES;
-        if ([cc respondsToSelector:@selector(presentAnimated:completion:)]) [cc presentAnimated:YES completion:nil];
-        else if ([cc respondsToSelector:@selector(presentAnimated:)]) [cc presentAnimated:YES];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gAllowCC = NO; });
+    NSMutableArray *all = [NSMutableArray array];
+    NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
+    if ([UIWindow respondsToSelector:ws]) wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)([UIWindow class], ws, YES, NO);
+    if (!wins) wins = [UIApplication sharedApplication].windows;
+    for (UIWindow *w in wins) { if (w == gStrip) continue; OPCCCollect(w, all); }
+    @try {
+        id mgr = [objc_getClass("SBSystemGestureManager") performSelector:NSSelectorFromString(@"mainDisplayManager")];
+        for (NSString *k in @[@"gestureRecognizers", @"_gestureRecognizers", @"allGestureRecognizers"]) {
+            @try { id arr = [mgr valueForKey:k]; if ([arr isKindOfClass:[NSArray class]]) [all addObjectsFromArray:arr]; else if ([arr isKindOfClass:[NSSet class]]) [all addObjectsFromArray:[arr allObjects]]; } @catch (__unused NSException *e) {}
+        }
+    } @catch (__unused NSException *e) {}
+    int found = 0;
+    for (UIGestureRecognizer *g in all) {
+        if (![g isKindOfClass:[UIGestureRecognizer class]] || !OPCCIsSystemGR(g)) continue;
+        if (![gCoverGRs containsObject:g]) {
+            [gCoverGRs addObject:g];
+            OPCCLog([NSString stringWithFormat:@"GR %@ | delegate=%@ | enabled=%d", NSStringFromClass([g class]), g.delegate ? NSStringFromClass([g.delegate class]) : @"-", g.enabled]);
+        }
+        found++;
     }
+    OPCCLog([NSString stringWithFormat:@"scan: окон=%lu всего recognizer=%lu системных=%d", (unsigned long)wins.count, (unsigned long)all.count, found]);
+}
+static void OPCCSuppressCover(BOOL on) { for (UIGestureRecognizer *g in gCoverGRs.allObjects) g.enabled = !on; }
+
+static void OPCCOpenCC(void) {
+    id cc = [objc_getClass("SBControlCenterController") sharedInstance];
+    gAllowCC = YES;
+    if ([cc respondsToSelector:@selector(presentAnimated:completion:)]) [cc presentAnimated:YES completion:nil];
+    else if ([cc respondsToSelector:@selector(presentAnimated:)]) [cc presentAnimated:YES];
+    OPCCLog(@"открываем CC");
+    // если шторка уведомлений всё же успела стартовать — убираем её (только когда телефон разблокирован)
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        id lock = [objc_getClass("SBLockScreenManager") sharedInstance];
+        BOOL locked = [lock respondsToSelector:@selector(isUILocked)] ? [lock isUILocked] : YES;
+        id cs = [objc_getClass("SBCoverSheetPresentationManager") sharedInstance];
+        if (!locked && [cs respondsToSelector:@selector(isPresented)] && [cs isPresented] && [cs respondsToSelector:@selector(setCoverSheetPresented:animated:withCompletion:)]) {
+            [cs setCoverSheetPresented:NO animated:NO withCompletion:nil]; OPCCLog(@"закрыли шторку уведомлений");
+        }
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gAllowCC = NO; });
+}
+
+@interface OPCCStripView : UIView { CGPoint _start; BOOL _fired; }
+@end
+@implementation OPCCStripView
+- (void)flash:(BOOL)on {
+    if (![OPCCActions boolPref:@"debugStrip" def:YES]) { self.backgroundColor = [UIColor clearColor]; return; }
+    self.backgroundColor = on ? [UIColor colorWithRed:1 green:0 blue:0 alpha:0.45] : [UIColor colorWithRed:1 green:0 blue:0 alpha:0.12];
+}
+- (void)touchesBegan:(NSSet *)ts withEvent:(UIEvent *)e {
+    _start = [[ts anyObject] locationInView:nil]; _fired = NO;
+    [self flash:YES]; OPCCLog([NSString stringWithFormat:@"touchesBegan x=%.0f y=%.0f", _start.x, _start.y]);
+    OPCCScan(); OPCCSuppressCover(YES);                 // глушим шторку уведомлений, пока палец в нашей зоне
+    [super touchesBegan:ts withEvent:e];
+}
+- (void)touchesMoved:(NSSet *)ts withEvent:(UIEvent *)e {
+    [super touchesMoved:ts withEvent:e];
+    CGPoint p = [[ts anyObject] locationInView:nil]; CGFloat dy = p.y - _start.y, dx = p.x - _start.x;
+    if (!_fired && dy > 6 && dy > fabs(dx)) { _fired = YES; OPCCOpenCC(); }
+}
+- (void)finish { OPCCSuppressCover(NO); [self flash:NO]; }
+- (void)touchesEnded:(NSSet *)ts withEvent:(UIEvent *)e { [super touchesEnded:ts withEvent:e]; [self performSelector:@selector(finish) withObject:nil afterDelay:0.3]; }
+- (void)touchesCancelled:(NSSet *)ts withEvent:(UIEvent *)e {
+    OPCCLog(@"touchesCancelled (система забрала касание)");
+    CGPoint p = [[ts anyObject] locationInView:nil];
+    if (!_fired && p.y - _start.y > 3) { _fired = YES; OPCCOpenCC(); }   // система отобрала касание — всё равно открываем свою шторку
+    [super touchesCancelled:ts withEvent:e]; [self performSelector:@selector(finish) withObject:nil afterDelay:0.3];
 }
 @end
 
-static UIWindow *gStrip; static OPCCStripHandler *gHandler;
 static void OPCCInstallStrip(void) {
     if (gStrip || ![OPCCActions boolPref:@"topRightGesture" def:YES]) return;
     CGRect sb = [UIScreen mainScreen].bounds;
     gStrip = [[UIWindow alloc] initWithFrame:CGRectMake(sb.size.width * 0.5, 0, sb.size.width * 0.5, 28)];
-    gStrip.windowLevel = 5000; gStrip.backgroundColor = [UIColor clearColor];
-    UIViewController *vc = [UIViewController new]; vc.view = [[OPCCStripView alloc] initWithFrame:gStrip.bounds]; vc.view.backgroundColor = [UIColor clearColor]; gStrip.rootViewController = vc;
-    gHandler = [OPCCStripHandler new];
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:gHandler action:@selector(pan:)];
-    pan.cancelsTouchesInView = NO; [vc.view addGestureRecognizer:pan];
+    gStrip.windowLevel = 100000; gStrip.backgroundColor = [UIColor clearColor];
+    UIViewController *vc = [UIViewController new];
+    OPCCStripView *sv = [[OPCCStripView alloc] initWithFrame:gStrip.bounds]; vc.view = sv; [sv flash:NO]; gStrip.rootViewController = vc;
     gStrip.hidden = NO;
+    OPCCLog(@"полоса жеста установлена");
 }
 
 %hook SpringBoard
