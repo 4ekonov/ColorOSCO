@@ -1,6 +1,7 @@
 #import "OPCCNotifications.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import "OPCCActions.h"
 
 NSString *const OPCCNotifsChanged = @"OPCCNotifsChanged";
 
@@ -55,6 +56,13 @@ static void NLog(NSString *s) {
     OPCCNotif *n = [OPCCNotif new];
     n.ident = ident; n.bundleID = bundle; n.title = title ?: @""; n.message = message; n.date = d; n.request = r;
     n.appName = header.length ? header : [self nameForBundle:bundle];
+    NSMutableArray *acts = [NSMutableArray array];
+    id sup = KV(r, @"supplementaryActions");
+    if ([sup isKindOfClass:[NSArray class]]) for (id a in sup) {
+        if ([NSStringFromClass([a class]) containsString:@"TextInput"]) continue;      // ответ с вводом текста пока не поддерживается
+        NSString *tt = KS(a, @"title"); if (tt.length && acts.count < 3) [acts addObject:a];
+    }
+    n.actions = acts; n.defaultAction = KV(r, @"defaultAction");
     @synchronized (self) {
         NSMutableArray *a = [self items]; NSUInteger idx = NSNotFound;
         for (NSUInteger i = 0; i < a.count; i++) if ([((OPCCNotif *)a[i]).ident isEqualToString:ident]) { idx = i; break; }
@@ -78,6 +86,17 @@ static void NLog(NSString *s) {
         if (act && runner && [runner respondsToSelector:s]) { ((void (*)(id, SEL, id, id, id, id, id))objc_msgSend)(runner, s, act, nil, nil, nil, nil); NLog(@"clear: через clearAction"); return; }
         NLog(@"clear: clearAction недоступен");
     } @catch (__unused NSException *e) { NLog(@"clear: исключение"); }
+}
++ (void)runAction:(id)act {
+    @try {
+        id runner = KV(act, @"actionRunner"); SEL s = NSSelectorFromString(@"executeAction:fromOrigin:endpoint:withParameters:completion:");
+        if (act && runner && [runner respondsToSelector:s]) ((void (*)(id, SEL, id, id, id, id, id))objc_msgSend)(runner, s, act, nil, nil, nil, nil);
+    } @catch (__unused NSException *e) {}
+}
++ (void)openNotif:(OPCCNotif *)n {
+    id act = n.defaultAction, runner = KV(act, @"actionRunner");
+    if (act && runner) { [self runAction:act]; return; }
+    [OPCCActions launchAppNow:n.bundleID];
 }
 + (void)clear:(OPCCNotif *)n {
     @synchronized (self) { [[self items] removeObject:n]; }

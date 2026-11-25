@@ -186,6 +186,26 @@ static void OPCCHideCoverWindows(BOOL hide) {
         if ([c containsString:@"CoverSheet"] || [rc containsString:@"CoverSheet"]) { CGFloat target = hide ? 0 : 1; if (w.alpha != target) { w.alpha = target; OPCCLog([NSString stringWithFormat:@"cover window %@ alpha=%.0f", c, target]); } }
     }
 }
+static void OPCCWalk(UIView *v, void (^blk)(UIView *)) { blk(v); for (UIView *s in v.subviews) OPCCWalk(s, blk); }
+// Прячем стандартный список уведомлений на экране блокировки, пока поверх него наш
+static void OPCCHideStockNotifList(BOOL hide) {
+    static BOOL wasHidden = NO;
+    if (!hide && !wasHidden) return;
+    NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
+    if ([UIWindow respondsToSelector:ws]) wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)([UIWindow class], ws, YES, NO);
+    if (!wins) wins = [UIApplication sharedApplication].windows;
+    __block int hits = 0;
+    for (UIWindow *w in wins) {
+        if (w == gStrip || w == gStripN) continue;
+        OPCCWalk(w, ^(UIView *v) {
+            NSString *c = NSStringFromClass([v class]);
+            if ([c containsString:@"NCNotificationList"] || [c containsString:@"NotificationListView"] || [c containsString:@"NotificationStructuredList"]) { v.alpha = hide ? 0 : 1; hits++; }
+        });
+    }
+    if (hide && !wasHidden) OPCCLog([NSString stringWithFormat:@"стандартный список уведомлений скрыт, найдено видов: %d", hits]);
+    wasHidden = hide;
+}
+
 static void OPCCShowNotifs(void) {
     if (OPCCLocked() || [OPCCNotifPanel isShown]) return;      // на экране блокировки остаётся стандартная панель
     OPCCHideCoverWindows(YES);
@@ -261,6 +281,10 @@ static void OPCCInstallStrips(void) {
     if (!gStripN && [OPCCActions boolPref:@"customNotifications" def:YES]) gStripN = OPCCMakeStrip(bottom ? CGRectMake(0, 0, W, 28) : CGRectMake(0, 0, W * 0.5, 28), 1, bottom);
     OPCCLog(@"полосы жестов установлены");
     [OPCCNotifPanel setOnHide:^{ OPCCHideCoverWindows(NO); }];
+    [NSTimer scheduledTimerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *tm) {          // уведомления на экране блокировки
+        BOOL lk = OPCCLocked(); [OPCCNotifPanel updateLockOverlayLocked:lk];
+        OPCCHideStockNotifList(lk && [OPCCNotifPanel lockOverlayVisible]);
+    }];
     OPCCEnforceTop();
     [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *tm) {       // жесты могут пересоздаваться системой — применяем снова
         OPCCEnforceTop();
@@ -301,7 +325,7 @@ static void OPCCInstallStrips(void) {
 @interface NCNotificationShortLookView : UIView @end
 @interface NCNotificationLongLookView : UIView @end
 static void OPCCStyleCard(UIView *v) {
-    if ([OPCCActions boolPref:@"customNotifications" def:YES] || ![OPCCActions boolPref:@"styleNotifications" def:YES]) return;
+    if (![OPCCActions boolPref:@"styleNotifications" def:YES]) return;
     v.layer.cornerRadius = 22; v.layer.cornerCurve = kCACornerCurveContinuous;
     v.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.6];
     for (UIView *s in v.subviews) if ([NSStringFromClass([s class]) containsString:@"MaterialView"]) s.hidden = YES;

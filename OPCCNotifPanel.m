@@ -15,6 +15,13 @@ static NSString *RelTime(NSDate *d) {
     if (s < 86400) return [NSString stringWithFormat:@"%ld ч. назад", (long)(s / 3600)];
     return [NSString stringWithFormat:@"%ld дн. назад", (long)(s / 86400)];
 }
+static NSString *Plural(NSUInteger n, NSString *one, NSString *few, NSString *many) {
+    NSUInteger a = n % 100, b = n % 10;
+    if (a >= 11 && a <= 14) return many;
+    if (b == 1) return one;
+    if (b >= 2 && b <= 4) return few;
+    return many;
+}
 static UIImage *AppIcon(NSString *b) {
     SEL s = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
     if (!b.length || ![UIImage respondsToSelector:s]) return nil;
@@ -27,28 +34,30 @@ static UIImage *AppIcon(NSString *b) {
 - (void)setHighlighted:(BOOL)h {
     [super setHighlighted:h];
     [UIView animateWithDuration:h ? 0.12 : 0.45 delay:0 usingSpringWithDamping:h ? 1 : 0.5 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
-        animations:^{ self.transform = h ? CGAffineTransformMakeScale(0.88, 0.88) : CGAffineTransformIdentity; } completion:nil];
+        animations:^{ self.transform = h ? CGAffineTransformMakeScale(0.9, 0.9) : CGAffineTransformIdentity; } completion:nil];
 }
 @end
 
 #pragma mark - карточка уведомления
 @interface OPCCNotifCard : UIControl
 @property (nonatomic, strong) NSArray<OPCCNotif *> *items;
-@property (nonatomic) BOOL collapsedGroup, msgExpanded;
-@property (nonatomic) NSInteger chevMode;                    // 0 авто (раскрыть текст), 2 — свернуть группу
+@property (nonatomic) BOOL collapsedGroup, msgExpanded, headerOnly, lockMode;
+@property (nonatomic) NSInteger chevMode;
 @property (nonatomic, copy) void (^onTap)(OPCCNotifCard *);
 @property (nonatomic, copy) void (^onBadge)(OPCCNotifCard *);
 @property (nonatomic, copy) void (^onChevron)(OPCCNotifCard *);
+@property (nonatomic, copy) void (^onAction)(OPCCNotifCard *, NSInteger);
 - (instancetype)initWithItems:(NSArray *)items collapsed:(BOOL)g mode:(NSInteger)m;
 - (CGFloat)layoutForWidth:(CGFloat)w u:(CGFloat)u;
 @end
 
 @implementation OPCCNotifCard {
     UIView *_body, *_peek1, *_peek2; UIImageView *_icon, *_chevIv; UILabel *_app, *_title, *_msg, *_badgeL; OPCCNBtn *_badge, *_chev;
+    NSMutableArray *_pills;
 }
 - (instancetype)initWithItems:(NSArray *)items collapsed:(BOOL)g mode:(NSInteger)m {
     if ((self = [super initWithFrame:CGRectZero])) {
-        _items = items; _collapsedGroup = g; _chevMode = m;
+        _items = items; _collapsedGroup = g; _chevMode = m; _pills = [NSMutableArray array];
         _peek2 = [UIView new]; _peek2.backgroundColor = W_(0, 0.22); _peek2.userInteractionEnabled = NO; _peek2.hidden = !g; [self addSubview:_peek2];
         _peek1 = [UIView new]; _peek1.backgroundColor = W_(0, 0.30); _peek1.userInteractionEnabled = NO; _peek1.hidden = !g; [self addSubview:_peek1];
         _body = [UIView new]; _body.backgroundColor = W_(0, 0.40); _body.userInteractionEnabled = NO; _body.layer.cornerCurve = kCACornerCurveContinuous; [self addSubview:_body];
@@ -69,6 +78,7 @@ static UIImage *AppIcon(NSString *b) {
 - (void)tap { if (_onTap) _onTap(self); }
 - (void)badgeTap { if (_onBadge) _onBadge(self); }
 - (void)chevTap { if (_onChevron) _onChevron(self); }
+- (void)pillTap:(OPCCNBtn *)b { if (_onAction) _onAction(self, b.tag); }
 - (void)setHighlighted:(BOOL)h {
     [super setHighlighted:h];
     [UIView animateWithDuration:h ? 0.12 : 0.4 delay:0 usingSpringWithDamping:h ? 1 : 0.6 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState
@@ -81,8 +91,21 @@ static UIImage *AppIcon(NSString *b) {
 - (CGFloat)layoutForWidth:(CGFloat)w u:(CGFloat)u {
     OPCCNotif *n = _items.firstObject; CGFloat pad = 12*u, ic = 16*u, tw = w - 2*pad;
     _body.layer.cornerRadius = 20*u;
-    UIImage *img = AppIcon(n.bundleID); _icon.image = img; _icon.layer.cornerRadius = 4*u; _icon.frame = CGRectMake(pad, pad, ic, ic);
-    _app.font = [UIFont systemFontOfSize:11*u]; _app.text = [NSString stringWithFormat:@"%@ · %@", n.appName, RelTime(n.date)];
+    _icon.image = AppIcon(n.bundleID); _icon.layer.cornerRadius = 4*u; _icon.frame = CGRectMake(pad, pad, ic, ic);
+    for (UIView *p in _pills) [p removeFromSuperview]; [_pills removeAllObjects];
+    _app.font = [UIFont systemFontOfSize:11*u];
+
+    // Шапка раскрытой группы: «Приложение · N уведомлений ˄»
+    if (_headerOnly) {
+        _app.text = [NSString stringWithFormat:@"%@ · %lu %@", n.appName, (unsigned long)_items.count, Plural(_items.count, @"уведомление", @"уведомления", @"уведомлений")];
+        _title.hidden = _msg.hidden = YES; _badge.hidden = YES; _peek1.hidden = _peek2.hidden = YES;
+        CGFloat d = 20*u; _chev.hidden = NO; _chev.frame = CGRectMake(w - pad - d, pad - 2*u, d, d); _chev.layer.cornerRadius = d/2; _chevIv.frame = _chev.bounds;
+        _chevIv.image = [NSym(@"chevron.up", 9*u, UIImageSymbolWeightBold) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        _app.frame = CGRectMake(pad + ic + 6*u, pad, w - 2*pad - ic - 12*u - d, ic);
+        CGFloat hh = pad * 2 + ic; _body.transform = CGAffineTransformIdentity; _body.frame = CGRectMake(0, 0, w, hh); return hh;
+    }
+    _title.hidden = _msg.hidden = NO; _peek1.hidden = _peek2.hidden = !_collapsedGroup;
+    _app.text = [NSString stringWithFormat:@"%@ · %@", n.appName, RelTime(n.date)];
     CGFloat right = 0;
     if (_collapsedGroup) {
         _badgeL.font = [UIFont systemFontOfSize:11*u weight:UIFontWeightMedium]; _badgeL.text = [NSString stringWithFormat:@"%lu", (unsigned long)_items.count];
@@ -92,7 +115,7 @@ static UIImage *AppIcon(NSString *b) {
     } else {
         _badge.hidden = YES;
         UIFont *mf0 = [UIFont systemFontOfSize:12*u];
-        BOOL needs = _chevMode == 2 || [self heightOf:n.message font:mf0 width:tw] > mf0.lineHeight * 2 + 1;
+        BOOL needs = _chevMode == 2 || (!_lockMode && n.actions.count > 0) || [self heightOf:n.message font:mf0 width:tw] > mf0.lineHeight * 2 + 1;
         _chev.hidden = !needs;
         if (needs) {
             CGFloat d = 20*u; _chev.frame = CGRectMake(w - pad - d, pad - 2*u, d, d); _chev.layer.cornerRadius = d/2; _chevIv.frame = _chev.bounds;
@@ -109,7 +132,26 @@ static UIImage *AppIcon(NSString *b) {
     BOOL expanded = _msgExpanded && !_collapsedGroup;
     _msg.numberOfLines = expanded ? 0 : 2;
     CGFloat mh = expanded ? full : MIN(full, two);
-    _msg.frame = CGRectMake(pad, y, tw, mh); y += mh + pad;
+    _msg.frame = CGRectMake(pad, y, tw, mh); y += mh;
+
+    // Кнопки действий (как в Android): «Открыть» + действия уведомления
+    if (expanded && !_lockMode) {
+        NSMutableArray *titles = [NSMutableArray arrayWithObject:@"Открыть"];
+        for (id a in n.actions) { NSString *tt = nil; @try { tt = [a valueForKey:@"title"]; } @catch (__unused NSException *e) {} if ([tt isKindOfClass:[NSString class]] && tt.length) [titles addObject:tt]; }
+        y += 10*u; CGFloat x = pad, ph = 28*u; UIFont *pf = [UIFont systemFontOfSize:11.5*u weight:UIFontWeightMedium];
+        for (NSUInteger i = 0; i < titles.count; i++) {
+            CGFloat pw = ceil([titles[i] sizeWithAttributes:@{NSFontAttributeName: pf}].width) + 24*u;
+            if (x + pw > w - pad) break;
+            OPCCNBtn *b = [OPCCNBtn new]; b.frame = CGRectMake(x, y, pw, ph); b.layer.cornerRadius = ph/2; b.tag = (NSInteger)i;
+            if (i == 0) { b.backgroundColor = W_(0, 0.12); b.layer.borderWidth = 1; b.layer.borderColor = [UIColor colorWithRed:0.35 green:0.85 blue:0.78 alpha:0.9].CGColor; }
+            else b.backgroundColor = W_(1, 0.16);
+            UILabel *l = [[UILabel alloc] initWithFrame:b.bounds]; l.text = titles[i]; l.font = pf; l.textColor = UIColor.whiteColor; l.textAlignment = NSTextAlignmentCenter; l.userInteractionEnabled = NO; [b addSubview:l];
+            [b addTarget:self action:@selector(pillTap:) forControlEvents:UIControlEventTouchUpInside]; [self addSubview:b]; [_pills addObject:b];
+            x += pw + 8*u;
+        }
+        y += ph;
+    }
+    y += pad;
     _body.transform = CGAffineTransformIdentity; _body.frame = CGRectMake(0, 0, w, y);
     if (_collapsedGroup) {
         _peek1.frame = CGRectMake(7*u, y - 10*u, w - 14*u, 16*u); _peek1.layer.cornerRadius = 16*u;
@@ -120,8 +162,10 @@ static UIImage *AppIcon(NSString *b) {
 }
 @end
 
-#pragma mark - главный вид панели
+#pragma mark - главный вид панели (и список на экране блокировки)
 @interface OPCCNotifView : UIView <UIGestureRecognizerDelegate>
+- (instancetype)initWithFrame:(CGRect)f lock:(BOOL)lock;
+- (void)reload;
 - (void)present;
 - (void)closeAnimated:(void (^)(void))done;
 @end
@@ -130,16 +174,18 @@ static UIImage *AppIcon(NSString *b) {
     UIView *_shade, *_bg; UIScrollView *_scroll; UILabel *_dateL, *_emptyL; OPCCNBtn *_bell, *_x;
     NSMutableArray<OPCCNotifCard *> *_cards; NSMutableSet *_expGroups, *_expMsgs;
     UIPanGestureRecognizer *_panGR; UITapGestureRecognizer *_tapGR;
-    BOOL _closing, _panActive, _suppress; NSInteger _gen; CGFloat _u;
+    BOOL _closing, _panActive, _suppress, _lock; NSInteger _gen; CGFloat _u;
 }
-- (instancetype)initWithFrame:(CGRect)f {
+- (instancetype)initWithFrame:(CGRect)f { return [self initWithFrame:f lock:NO]; }
+- (instancetype)initWithFrame:(CGRect)f lock:(BOOL)lock {
     if ((self = [super initWithFrame:f])) {
+        _lock = lock;
         self.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
         _cards = [NSMutableArray array]; _expGroups = [NSMutableSet set]; _expMsgs = [NSMutableSet set]; _u = 1.2;
         _shade = [[UIView alloc] initWithFrame:self.bounds]; _shade.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight; [self addSubview:_shade];
         UIVisualEffectView *fx = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
         UIView *dim = [UIView new]; dim.backgroundColor = W_(0, 0.38); [fx.contentView addSubview:dim]; _bg = fx; [_shade addSubview:_bg];
-        _scroll = [UIScrollView new]; _scroll.showsVerticalScrollIndicator = NO; _scroll.bounces = NO; _scroll.delaysContentTouches = NO; _scroll.clipsToBounds = NO; [_shade addSubview:_scroll];
+        _scroll = [UIScrollView new]; _scroll.showsVerticalScrollIndicator = NO; _scroll.bounces = NO; _scroll.delaysContentTouches = NO; _scroll.clipsToBounds = lock; [_shade addSubview:_scroll];
         _dateL = [UILabel new]; _dateL.textColor = UIColor.whiteColor; [_shade addSubview:_dateL];
         _emptyL = [UILabel new]; _emptyL.textColor = W_(1, 0.6); _emptyL.numberOfLines = 0; _emptyL.textAlignment = NSTextAlignmentCenter; _emptyL.font = [UIFont systemFontOfSize:12]; _emptyL.hidden = YES; [_shade addSubview:_emptyL];
         _bell = [OPCCNBtn new]; UIImageView *bi = [[UIImageView alloc] initWithImage:[NSym(@"bell", 17, UIImageSymbolWeightRegular) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
@@ -149,8 +195,11 @@ static UIImage *AppIcon(NSString *b) {
         UIImageView *xi = [[UIImageView alloc] initWithImage:[NSym(@"xmark", 15, UIImageSymbolWeightMedium) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
         xi.tintColor = UIColor.whiteColor; xi.contentMode = UIViewContentModeCenter; xi.tag = 9; xi.userInteractionEnabled = NO; [_x addSubview:xi]; [_shade addSubview:_x];
         [_x addTarget:self action:@selector(clearAll) forControlEvents:UIControlEventTouchUpInside];
-        UITapGestureRecognizer *tp = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(emptyTap)]; tp.delegate = self; tp.cancelsTouchesInView = NO; [self addGestureRecognizer:tp]; _tapGR = tp;
-        UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panClose:)]; pp.delegate = self; pp.cancelsTouchesInView = NO; [self addGestureRecognizer:pp]; _panGR = pp;
+        if (lock) { _bg.hidden = _dateL.hidden = _bell.hidden = _x.hidden = YES; }
+        else {
+            UITapGestureRecognizer *tp = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(emptyTap)]; tp.delegate = self; tp.cancelsTouchesInView = NO; [self addGestureRecognizer:tp]; _tapGR = tp;
+            UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panClose:)]; pp.delegate = self; pp.cancelsTouchesInView = NO; [self addGestureRecognizer:pp]; _panGR = pp;
+        }
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(storeChanged) name:OPCCNotifsChanged object:nil];
     }
     return self;
@@ -159,14 +208,16 @@ static UIImage *AppIcon(NSString *b) {
 - (void)storeChanged { if (!_suppress && !_closing && !_panActive) [self reload]; }
 
 #pragma mark карточки
-- (OPCCNotifCard *)makeCard:(NSArray *)items collapsed:(BOOL)g mode:(NSInteger)m {
+- (OPCCNotifCard *)makeCard:(NSArray *)items collapsed:(BOOL)g mode:(NSInteger)m header:(BOOL)hd {
     OPCCNotifCard *c = [[OPCCNotifCard alloc] initWithItems:items collapsed:g mode:m];
+    c.headerOnly = hd; c.lockMode = _lock;
     c.msgExpanded = [_expMsgs containsObject:((OPCCNotif *)items.firstObject).ident];
     __weak OPCCNotifView *ws = self;
     c.onTap = ^(OPCCNotifCard *k) { [ws cardTap:k]; };
     c.onBadge = ^(OPCCNotifCard *k) { [ws expandGroup:k]; };
     c.onChevron = ^(OPCCNotifCard *k) { [ws chevron:k]; };
-    UIPanGestureRecognizer *p = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(cardPan:)]; p.delegate = self; [c addGestureRecognizer:p];
+    c.onAction = ^(OPCCNotifCard *k, NSInteger i) { [ws cardAction:k idx:i]; };
+    if (!hd) { UIPanGestureRecognizer *p = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(cardPan:)]; p.delegate = self; [c addGestureRecognizer:p]; }
     return c;
 }
 - (void)reload {
@@ -175,23 +226,36 @@ static UIImage *AppIcon(NSString *b) {
     for (OPCCNotif *n in [OPCCNotifStore all]) { NSString *b = n.bundleID ?: @""; if (!map[b]) { map[b] = [NSMutableArray array]; [order addObject:b]; } [map[b] addObject:n]; }
     for (NSString *b in order) {
         NSArray *items = map[b];
-        if (items.count > 1 && ![_expGroups containsObject:b]) [_cards addObject:[self makeCard:items collapsed:YES mode:0]];
-        else for (NSUInteger i = 0; i < items.count; i++) [_cards addObject:[self makeCard:@[items[i]] collapsed:NO mode:(items.count > 1 && i == 0) ? 2 : 0]];
+        if (items.count > 1 && ![_expGroups containsObject:b]) [_cards addObject:[self makeCard:items collapsed:YES mode:0 header:NO]];
+        else {
+            if (items.count > 1) [_cards addObject:[self makeCard:items collapsed:NO mode:0 header:YES]];   // шапка группы со «сворачивателем»
+            for (NSUInteger i = 0; i < items.count; i++) [_cards addObject:[self makeCard:@[items[i]] collapsed:NO mode:0 header:NO]];
+        }
     }
     for (UIView *c in _cards) [_scroll addSubview:c];
-    _emptyL.hidden = _cards.count > 0 || ![OPCCActions boolPref:@"debugStrip" def:YES];
+    _emptyL.hidden = _lock || _cards.count > 0 || ![OPCCActions boolPref:@"debugStrip" def:YES];
     _emptyL.text = [NSString stringWithFormat:@"Уведомлений нет (захвачено: %lu)\nЕсли они есть — пришлите OPCC_notifs.txt", (unsigned long)[OPCCNotifStore all].count];
     [self setNeedsLayout];
 }
 - (void)relayoutAnimated {
     [UIView animateWithDuration:0.5 delay:0 usingSpringWithDamping:0.82 initialSpringVelocity:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{ [self setNeedsLayout]; [self layoutIfNeeded]; } completion:nil];
 }
+- (void)openNotif:(OPCCNotif *)n {
+    Hap(); [OPCCNotifPanel hide];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [OPCCNotifStore openNotif:n]; [OPCCNotifStore clear:n]; });
+}
 - (void)cardTap:(OPCCNotifCard *)c {
     Hap();
     if (c.collapsedGroup) { [self expandGroup:c]; return; }
-    OPCCNotif *n = c.items.firstObject; NSString *b = n.bundleID;
-    [OPCCNotifStore clear:n]; [OPCCNotifPanel hide];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [OPCCActions launchAppNow:b]; });
+    if (c.headerOnly) { [self chevron:c]; return; }
+    OPCCNotif *n = c.items.firstObject;
+    if (_lock) { [self chevron:c]; return; }       // на экране блокировки тап раскрывает, открытие требует разблокировки
+    [self openNotif:n];
+}
+- (void)cardAction:(OPCCNotifCard *)c idx:(NSInteger)i {
+    OPCCNotif *n = c.items.firstObject;
+    if (i == 0) { [self openNotif:n]; return; }
+    Hap(); NSInteger k = i - 1; if (k >= 0 && k < (NSInteger)n.actions.count) [OPCCNotifStore runAction:n.actions[k]];
 }
 - (void)expandGroup:(OPCCNotifCard *)c {
     Hap(); NSString *b = ((OPCCNotif *)c.items.firstObject).bundleID ?: @""; [_expGroups addObject:b];
@@ -201,7 +265,7 @@ static UIImage *AppIcon(NSString *b) {
 }
 - (void)chevron:(OPCCNotifCard *)c {
     Hap(); OPCCNotif *n = c.items.firstObject;
-    if (c.chevMode == 2) { [_expGroups removeObject:n.bundleID ?: @""]; [self reload]; [self relayoutAnimated]; return; }
+    if (c.headerOnly || c.chevMode == 2) { [_expGroups removeObject:n.bundleID ?: @""]; [self reload]; [self relayoutAnimated]; return; }
     if ([_expMsgs containsObject:n.ident]) [_expMsgs removeObject:n.ident]; else [_expMsgs addObject:n.ident];
     c.msgExpanded = [_expMsgs containsObject:n.ident]; [self relayoutAnimated];
 }
@@ -244,7 +308,7 @@ static UIImage *AppIcon(NSString *b) {
 - (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
     if (![g isKindOfClass:[UIPanGestureRecognizer class]]) return [super gestureRecognizerShouldBegin:g];
     CGPoint v = [(UIPanGestureRecognizer *)g velocityInView:self];
-    if (g == _panGR) {
+    if (_panGR && g == _panGR) {
         if (_closing || !(v.y < 0 && fabs(v.y) > fabs(v.x) * 1.3)) return NO;
         CGFloat maxOff = _scroll.contentSize.height - _scroll.bounds.size.height;
         if (_scroll.scrollEnabled && maxOff > 1 && _scroll.contentOffset.y < maxOff - 2) return NO;
@@ -271,13 +335,25 @@ static UIImage *AppIcon(NSString *b) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height, u = W / 316.; _u = u;
-    CGFloat top = MAX(self.safeAreaInsets.top, 20), cy = top + 26*u + [OPCCActions topOffset], m = 12*u;
+    CGFloat m = 12*u, cw = W - 2*m;
+    if (_lock) {      // список на экране блокировки: только карточки
+        _scroll.frame = self.bounds; CGFloat y = 0;
+        for (OPCCNotifCard *c in _cards) {
+            CGFloat h = [c layoutForWidth:cw u:u];
+            if (CGAffineTransformIsIdentity(c.transform)) c.frame = CGRectMake(m, y, cw, h); else { c.bounds = CGRectMake(0, 0, cw, h); c.center = CGPointMake(m + cw/2, y + h/2); }
+            y += h + 6*u;
+        }
+        _scroll.contentSize = CGSizeMake(W, MAX(H, y)); _scroll.scrollEnabled = y > H + 6;
+        if (!_scroll.scrollEnabled && _scroll.contentOffset.y != 0) _scroll.contentOffset = CGPointZero;
+        return;
+    }
+    CGFloat top = MAX(self.safeAreaInsets.top, 20), cy = top + 26*u + [OPCCActions topOffset];
     CGRect full = CGRectMake(0, 0, W, H); _bg.frame = full; ((UIVisualEffectView *)_bg).contentView.subviews.firstObject.frame = full;
     _dateL.frame = CGRectMake(m + 4*u, cy - 10*u, 220*u, 20*u);
     _bell.frame = CGRectMake(W - m - 4*u - 30*u, cy - 15*u, 30*u, 30*u); [_bell viewWithTag:9].frame = _bell.bounds;
     CGFloat sTop = cy + 22*u, sH = H - sTop;
     _scroll.frame = CGRectMake(0, sTop, W, sH);
-    CGFloat y = 0, cw = W - 2*m;
+    CGFloat y = 0;
     for (OPCCNotifCard *c in _cards) {
         CGFloat h = [c layoutForWidth:cw u:u];
         if (CGAffineTransformIsIdentity(c.transform)) c.frame = CGRectMake(m, y, cw, h); else { c.bounds = CGRectMake(0, 0, cw, h); c.center = CGPointMake(m + cw/2, y + h/2); }
@@ -320,9 +396,10 @@ static UIImage *AppIcon(NSString *b) {
 }
 @end
 
-#pragma mark - окно панели
+#pragma mark - окна: панель и список на экране блокировки
 @implementation OPCCNotifPanel
 static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown; static void (^gOnHide)(void);
+static UIWindow *gLockWin; static OPCCNotifView *gLockView;
 + (BOOL)isShown { return gShown; }
 + (void)setOnHide:(void (^)(void))b { gOnHide = [b copy]; }
 + (void)show {
@@ -338,5 +415,17 @@ static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown; static v
 + (void)hide {
     if (!gShown) return; gShown = NO;
     [gView closeAnimated:^{ gWin.hidden = YES; if (gOnHide) gOnHide(); }];
+}
++ (BOOL)lockOverlayVisible { return gLockWin && !gLockWin.hidden; }
++ (void)updateLockOverlayLocked:(BOOL)locked {
+    BOOL want = locked && [OPCCNotifStore all].count > 0 && [OPCCActions boolPref:@"customNotifications" def:YES] && [OPCCActions boolPref:@"lockNotifications" def:YES];
+    if (want) {
+        if (!gLockWin) {
+            CGRect b = [UIScreen mainScreen].bounds; CGRect f = CGRectMake(0, b.size.height * 0.30, b.size.width, b.size.height * 0.50);
+            gLockWin = [[UIWindow alloc] initWithFrame:f]; gLockWin.windowLevel = 2500; gLockWin.backgroundColor = [UIColor clearColor];
+            UIViewController *vc = [UIViewController new]; gLockView = [[OPCCNotifView alloc] initWithFrame:gLockWin.bounds lock:YES]; vc.view = gLockView; gLockWin.rootViewController = vc;
+        }
+        if (gLockWin.hidden) { gLockWin.hidden = NO; [gLockView reload]; }
+    } else if (gLockWin && !gLockWin.hidden) gLockWin.hidden = YES;
 }
 @end
