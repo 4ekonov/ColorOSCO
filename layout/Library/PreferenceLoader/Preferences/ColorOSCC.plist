@@ -98,9 +98,16 @@
     </dict>
     <dict>
       <key>cell</key><string>PSSwitchCell</string>
-      <key>label</key><string>Тёмный стиль карточек уведомлений</string>
+      <key>label</key><string>Тёмный стиль стандартных карточек (если своя панель выключена)</string>
       <key>defaults</key><string>com.opcc.coloroscc</string>
       <key>key</key><string>styleNotifications</string>
+      <key>default</key><true/>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Своя панель уведомлений (стиль ColorOS)</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>customNotifications</string>
       <key>default</key><true/>
     </dict>
   </array>

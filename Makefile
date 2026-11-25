@@ -7,7 +7,7 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = ColorOSCC
-ColorOSCC_FILES = Tweak.xm OPCCView.m OPCCActions.m
+ColorOSCC_FILES = Tweak.xm OPCCView.m OPCCActions.m OPCCNotifStore.m OPCCNotifPanel.m
 ColorOSCC_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unguarded-availability-new -Wno-error
 ColorOSCC_FRAMEWORKS = UIKit MediaPlayer AVFoundation CoreLocation AudioToolbox
 

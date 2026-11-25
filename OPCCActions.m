@@ -283,13 +283,13 @@ static void ToggleScreenRecording(void) {
     [[NSNotificationCenter defaultCenter] postNotificationName:OPCCDismissNotification object:nil];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.55 * NSEC_PER_SEC)), dispatch_get_main_queue(), b);
 }
-+ (void)openApp:(NSString *)b {
-    [self dismissThen:^{
-        UIApplication *app = [UIApplication sharedApplication];
-        SEL sel = NSSelectorFromString(@"launchApplicationWithIdentifier:suspended:");
-        if ([app respondsToSelector:sel]) ((void (*)(id, SEL, id, BOOL))objc_msgSend)(app, sel, b, NO);
-    }];
++ (void)launchAppNow:(NSString *)b {
+    if (!b.length) return;
+    UIApplication *app = [UIApplication sharedApplication];
+    SEL sel = NSSelectorFromString(@"launchApplicationWithIdentifier:suspended:");
+    if ([app respondsToSelector:sel]) ((void (*)(id, SEL, id, BOOL))objc_msgSend)(app, sel, b, NO);
 }
++ (void)openApp:(NSString *)b { [self dismissThen:^{ [self launchAppNow:b]; }]; }
 + (void)openSettingsURL:(NSString *)u {
     [self dismissThen:^{
         NSURL *url = [NSURL URLWithString:u]; if (!url) return;

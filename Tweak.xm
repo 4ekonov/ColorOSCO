@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import "OPCCView.h"
 #import "OPCCActions.h"
+#import "OPCCNotifications.h"
 
 @interface SBControlCenterController : NSObject
 + (id)sharedInstance;
@@ -58,7 +59,7 @@ static void OPCCDump(void) {
 @end
 
 static NSHashTable *gCoverGRs;
-static UIWindow *gStrip;
+static UIWindow *gStrip, *gStripN;
 
 static void OPCCLog(NSString *line) {
     static int n = 0; if (n++ > 200) return;
@@ -84,7 +85,7 @@ static void OPCCScan(void) {
     NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
     if ([UIWindow respondsToSelector:ws]) wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)([UIWindow class], ws, YES, NO);
     if (!wins) wins = [UIApplication sharedApplication].windows;
-    for (UIWindow *w in wins) { if (w == gStrip) continue; OPCCCollect(w, all); }
+    for (UIWindow *w in wins) { if (w == gStrip || w == gStripN) continue; OPCCCollect(w, all); }
     @try {
         id mgrCls = (id)objc_getClass("SBSystemGestureManager"); SEL mdm = NSSelectorFromString(@"mainDisplayManager");
         id mgr = [mgrCls respondsToSelector:mdm] ? ((id (*)(id, SEL))objc_msgSend)(mgrCls, mdm) : nil;
@@ -137,7 +138,35 @@ static void OPCCRescue(void) {
     });
 }
 
+// Стандартная шторка уведомлений живёт в окне CoverSheet — на время нашей панели делаем это окно невидимым
+static void OPCCHideCoverWindows(BOOL hide) {
+    NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
+    if ([UIWindow respondsToSelector:ws]) wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)([UIWindow class], ws, YES, NO);
+    if (!wins) wins = [UIApplication sharedApplication].windows;
+    for (UIWindow *w in wins) {
+        if (w == gStrip || w == gStripN) continue;
+        NSString *c = NSStringFromClass([w class]), *rc = w.rootViewController ? NSStringFromClass([w.rootViewController class]) : @"";
+        if ([c containsString:@"CoverSheet"] || [rc containsString:@"CoverSheet"]) { w.alpha = hide ? 0 : 1; OPCCLog([NSString stringWithFormat:@"cover window %@ alpha=%d", c, !hide]); }
+    }
+}
+static void OPCCShowNotifs(void) {
+    if (OPCCLocked() || [OPCCNotifPanel isShown]) return;      // на экране блокировки остаётся стандартная панель
+    OPCCHideCoverWindows(YES);
+    [OPCCNotifPanel show]; OPCCStatus(@"панель уведомлений");
+}
+static void OPCCRescueNotifs(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (OPCCLocked()) return;
+        BOOL nc = OPCCCoverPresented();
+        OPCCStatus([NSString stringWithFormat:@"NC=%d panel=%d", nc, [OPCCNotifPanel isShown]]);
+        if (nc) OPCCDismissCover();
+        if (![OPCCNotifPanel isShown]) { OPCCHideCoverWindows(YES); [OPCCNotifPanel show]; }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ OPCCHideCoverWindows(NO); });
+    });
+}
+
 @interface OPCCStripView : UIView { CGPoint _start; BOOL _fired; }
+@property (nonatomic) NSInteger kind;   // 0 — Центр управления, 1 — уведомления
 @end
 @implementation OPCCStripView
 - (void)flash:(BOOL)on {
@@ -147,44 +176,66 @@ static void OPCCRescue(void) {
 - (void)touchesBegan:(NSSet *)ts withEvent:(UIEvent *)e {
     _start = [[ts anyObject] locationInView:nil]; _fired = NO;
     [self flash:YES]; OPCCLog([NSString stringWithFormat:@"touchesBegan x=%.0f y=%.0f", _start.x, _start.y]);
+    if (_kind == 1 && OPCCLocked()) { [super touchesBegan:ts withEvent:e]; return; }   // экран блокировки: пусть работает стандартная панель
     OPCCScan(); OPCCSuppressCover(YES);                 // глушим шторку уведомлений, пока палец в нашей зоне
     [super touchesBegan:ts withEvent:e];
 }
 - (void)touchesMoved:(NSSet *)ts withEvent:(UIEvent *)e {
     [super touchesMoved:ts withEvent:e];
     CGPoint p = [[ts anyObject] locationInView:nil]; CGFloat dy = p.y - _start.y, dx = p.x - _start.x;
-    if (!_fired && dy > 6 && dy > fabs(dx)) { _fired = YES; OPCCPresentCC(); OPCCStatus(@"свайп: просим CC"); }
+    if (!_fired && dy > 6 && dy > fabs(dx)) {
+        if (_kind == 1 && OPCCLocked()) return;
+        _fired = YES;
+        if (_kind == 1) OPCCShowNotifs(); else { OPCCPresentCC(); OPCCStatus(@"свайп: просим CC"); }
+    }
 }
 - (void)finish { OPCCSuppressCover(NO); [self flash:NO]; }
-- (void)touchesEnded:(NSSet *)ts withEvent:(UIEvent *)e { [super touchesEnded:ts withEvent:e]; if (_fired) OPCCRescue(); [self performSelector:@selector(finish) withObject:nil afterDelay:0.3]; }
+- (void)touchesEnded:(NSSet *)ts withEvent:(UIEvent *)e { [super touchesEnded:ts withEvent:e]; if (_fired) { if (_kind == 1) OPCCRescueNotifs(); else OPCCRescue(); } [self performSelector:@selector(finish) withObject:nil afterDelay:0.3]; }
 - (void)touchesCancelled:(NSSet *)ts withEvent:(UIEvent *)e {
     OPCCLog(@"touchesCancelled (система забрала касание)");
     CGPoint p = [[ts anyObject] locationInView:nil];
-    if (!_fired && p.y - _start.y > 3) { _fired = YES; OPCCPresentCC(); }
-    if (_fired) OPCCRescue();   // система отобрала касание — доводим дело до конца сами
+    if (!_fired && p.y - _start.y > 3 && !(_kind == 1 && OPCCLocked())) { _fired = YES; if (_kind == 1) OPCCShowNotifs(); else OPCCPresentCC(); }
+    if (_fired) { if (_kind == 1) OPCCRescueNotifs(); else OPCCRescue(); }   // система отобрала касание — доводим дело до конца сами
     [super touchesCancelled:ts withEvent:e]; [self performSelector:@selector(finish) withObject:nil afterDelay:0.3];
 }
 @end
 
-static void OPCCInstallStrip(void) {
-    if (gStrip || [OPCCActions bottomMode] || ![OPCCActions boolPref:@"topRightGesture" def:YES]) return;   // на iPhone с кнопкой жест остаётся стандартным — снизу
-    CGRect sb = [UIScreen mainScreen].bounds;
-    gStrip = [[UIWindow alloc] initWithFrame:CGRectMake(sb.size.width * 0.5, 0, sb.size.width * 0.5, 28)];
-    gStrip.windowLevel = 100000; gStrip.backgroundColor = [UIColor clearColor];
+static UIWindow *OPCCMakeStrip(CGRect f, NSInteger kind, BOOL label) {
+    UIWindow *w = [[UIWindow alloc] initWithFrame:f];
+    w.windowLevel = 100000; w.backgroundColor = [UIColor clearColor];
     UIViewController *vc = [UIViewController new];
-    OPCCStripView *sv = [[OPCCStripView alloc] initWithFrame:gStrip.bounds]; vc.view = sv; [sv flash:NO]; gStrip.rootViewController = vc;
-    if ([OPCCActions boolPref:@"debugStrip" def:YES]) {
+    OPCCStripView *sv = [[OPCCStripView alloc] initWithFrame:w.bounds]; sv.kind = kind; vc.view = sv; [sv flash:NO]; w.rootViewController = vc;
+    if (label && [OPCCActions boolPref:@"debugStrip" def:YES]) {
         gStatus = [[UILabel alloc] initWithFrame:CGRectInset(sv.bounds, 4, 0)]; gStatus.font = [UIFont boldSystemFontOfSize:8]; gStatus.textColor = [UIColor whiteColor];
         gStatus.numberOfLines = 2; gStatus.userInteractionEnabled = NO; gStatus.text = @"OPCC готов"; [sv addSubview:gStatus];
     }
-    gStrip.hidden = NO;
-    OPCCLog(@"полоса жеста установлена");
+    w.hidden = NO; return w;
 }
+static void OPCCInstallStrips(void) {
+    CGRect sb = [UIScreen mainScreen].bounds; CGFloat W = sb.size.width; BOOL bottom = [OPCCActions bottomMode];
+    // Центр управления: на iPhone с чёлкой — сверху справа; на iPhone с кнопкой остаётся стандартный жест снизу
+    if (!gStrip && !bottom && [OPCCActions boolPref:@"topRightGesture" def:YES]) gStrip = OPCCMakeStrip(CGRectMake(W * 0.5, 0, W * 0.5, 28), 0, YES);
+    // Уведомления: сверху слева (на iPhone с кнопкой — по всей ширине)
+    if (!gStripN && [OPCCActions boolPref:@"customNotifications" def:YES]) gStripN = OPCCMakeStrip(bottom ? CGRectMake(0, 0, W, 28) : CGRectMake(0, 0, W * 0.5, 28), 1, bottom);
+    OPCCLog(@"полосы жестов установлены");
+}
+
+#pragma mark - сбор уведомлений для своей панели
+%hook NCNotificationDispatcher
+- (void)postNotificationWithRequest:(id)r { %orig; [OPCCNotifStore post:r]; }
+- (void)modifyNotificationWithRequest:(id)r { %orig; [OPCCNotifStore post:r]; }
+- (void)withdrawNotificationWithRequest:(id)r { %orig; [OPCCNotifStore withdraw:r]; }
+%end
+%hook NCNotificationMasterList
+- (void)insertNotificationRequest:(id)r { %orig; [OPCCNotifStore post:r]; }
+- (void)modifyNotificationRequest:(id)r { %orig; [OPCCNotifStore post:r]; }
+- (void)removeNotificationRequest:(id)r { %orig; [OPCCNotifStore withdraw:r]; }
+%end
 
 %hook SpringBoard
 - (void)applicationDidFinishLaunching:(id)app {
     %orig;
-    dispatch_async(dispatch_get_main_queue(), ^{ OPCCInstallStrip(); OPCCDump(); });
+    dispatch_async(dispatch_get_main_queue(), ^{ OPCCInstallStrips(); OPCCDump(); });
 }
 %end
 
@@ -201,7 +252,7 @@ static void OPCCInstallStrip(void) {
 @interface NCNotificationShortLookView : UIView @end
 @interface NCNotificationLongLookView : UIView @end
 static void OPCCStyleCard(UIView *v) {
-    if (![OPCCActions boolPref:@"styleNotifications" def:YES]) return;
+    if ([OPCCActions boolPref:@"customNotifications" def:YES] || ![OPCCActions boolPref:@"styleNotifications" def:YES]) return;
     v.layer.cornerRadius = 22; v.layer.cornerCurve = kCACornerCurveContinuous;
     v.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.6];
     for (UIView *s in v.subviews) if ([NSStringFromClass([s class]) containsString:@"MaterialView"]) s.hidden = YES;

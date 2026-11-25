@@ -34,6 +34,7 @@ extern __weak id OPCCRingerControl;   // заполняется хуком SBRin
 + (NSInteger)ringerMode;                 // 0 звонок, 1 вибро, 2 без звука
 + (void)setRingerMode:(NSInteger)m;
 // запуск приложений / настроек (сами плавно закрывают шторку)
++ (void)launchAppNow:(NSString *)bundleID;   // без закрытия шторки (для панели уведомлений)
 + (void)openApp:(NSString *)bundleID;
 + (void)openSettingsURL:(NSString *)url;
 @end
