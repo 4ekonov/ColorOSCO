@@ -20,7 +20,18 @@ static const void *kOPCC = &kOPCC;
 static BOOL gAllowCC = NO;   // YES только в момент, когда шторку открываем мы сами
 
 #pragma mark - диагностика: список методов классов (поможет, если жест не сработает)
+static void OPCCDumpNames(void) {
+    NSString *path = @"/var/mobile/Documents/OPCC_classes.txt";
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    unsigned n = 0; Class *cl = objc_copyClassList(&n); NSMutableString *o = [NSMutableString string];
+    for (unsigned i = 0; i < n; i++) {
+        NSString *nm = NSStringFromClass(cl[i]);
+        if ([nm hasPrefix:@"NCNotification"] || [nm hasPrefix:@"CSCoverSheet"] || [nm hasPrefix:@"SBCoverSheet"] || [nm hasPrefix:@"CSNotification"]) [o appendFormat:@"%@\n", nm];
+    }
+    free(cl); [o writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
 static void OPCCDump(void) {
+    OPCCDumpNames();
     NSString *path = @"/var/mobile/Documents/OPCC_methods.txt";
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return;
     NSMutableString *o = [NSMutableString string];
@@ -153,7 +164,7 @@ static void OPCCRescue(void) {
 @end
 
 static void OPCCInstallStrip(void) {
-    if (gStrip || ![OPCCActions boolPref:@"topRightGesture" def:YES]) return;
+    if (gStrip || [OPCCActions bottomMode] || ![OPCCActions boolPref:@"topRightGesture" def:YES]) return;   // на iPhone с кнопкой жест остаётся стандартным — снизу
     CGRect sb = [UIScreen mainScreen].bounds;
     gStrip = [[UIWindow alloc] initWithFrame:CGRectMake(sb.size.width * 0.5, 0, sb.size.width * 0.5, 28)];
     gStrip.windowLevel = 100000; gStrip.backgroundColor = [UIColor clearColor];
@@ -177,9 +188,23 @@ static void OPCCInstallStrip(void) {
 #pragma mark - отключение стандартного жеста Центра управления (снизу)
 %hook SBControlCenterController
 - (BOOL)_shouldAllowControlCenterGesture {
-    if (!gAllowCC && [OPCCActions boolPref:@"disableBottomGesture" def:YES]) return NO;
+    if (![OPCCActions bottomMode] && !gAllowCC && [OPCCActions boolPref:@"disableBottomGesture" def:YES]) return NO;
     return %orig;
 }
+%end
+
+#pragma mark - стиль уведомлений (тёмные полупрозрачные скруглённые карточки)
+static void OPCCStyleCard(UIView *v) {
+    if (![OPCCActions boolPref:@"styleNotifications" def:YES]) return;
+    v.layer.cornerRadius = 22; v.layer.cornerCurve = kCACornerCurveContinuous;
+    v.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.6];
+    for (UIView *s in v.subviews) if ([NSStringFromClass([s class]) containsString:@"MaterialView"]) s.hidden = YES;
+}
+%hook NCNotificationShortLookView
+- (void)layoutSubviews { %orig; OPCCStyleCard(self); }
+%end
+%hook NCNotificationLongLookView
+- (void)layoutSubviews { %orig; OPCCStyleCard(self); }
 %end
 
 #pragma mark - переключатель звука

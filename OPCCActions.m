@@ -133,6 +133,17 @@ static void ToggleScreenRecording(void) {
 + (CGFloat)buttonScale { id v = [self pref:@"buttonScale"]; return [v respondsToSelector:@selector(doubleValue)] ? MAX(0.7, MIN(1.8, [v doubleValue])) : 1.2; }
 + (BOOL)shadeScaleIsSet { return [[self pref:@"shadeScale"] respondsToSelector:@selector(doubleValue)]; }
 + (BOOL)boolPref:(NSString *)k def:(BOOL)d { id v = [self pref:k]; return [v respondsToSelector:@selector(boolValue)] ? [v boolValue] : d; }
++ (BOOL)isHomeButtonDevice {
+    UIScreen *s = [UIScreen mainScreen]; SEL sel = NSSelectorFromString(@"_displayCornerRadius");
+    if ([s respondsToSelector:sel]) { CGFloat r = ((CGFloat (*)(id, SEL))objc_msgSend)(s, sel); if (r > 0.5) return NO; }   // скруглённый экран — iPhone с чёлкой/островом
+    CGSize n = s.nativeBounds.size; return MAX(n.width, n.height) < 2000;
+}
++ (BOOL)bottomMode {
+    id v = [self pref:@"shadeEdge"]; NSString *e = [v isKindOfClass:[NSString class]] ? v : @"auto";
+    if ([e isEqualToString:@"top"]) return NO;
+    if ([e isEqualToString:@"bottom"]) return YES;
+    return [self isHomeButtonDevice];
+}
 + (BOOL)showLabels     { id v = [self pref:@"showLabels"];  return [v respondsToSelector:@selector(boolValue)] ? [v boolValue] : YES; }
 
 #pragma mark - каталог

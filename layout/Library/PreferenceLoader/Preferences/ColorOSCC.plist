@@ -77,6 +77,32 @@
       <key>key</key><string>debugStrip</string>
       <key>default</key><true/>
     </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Устройство</string>
+      <key>footerText</key><string>Авто: на iPhone с кнопкой «Домой» шторка выезжает снизу (стандартный жест), на iPhone с чёлкой — сверху справа. Применяется после респринга.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSLinkListCell</string>
+      <key>label</key><string>Откуда выезжает шторка</string>
+      <key>detail</key><string>PSListItemsController</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>shadeEdge</string>
+      <key>default</key><string>auto</string>
+      <key>validTitles</key><array><string>Авто</string><string>Сверху</string><string>Снизу</string></array>
+      <key>validValues</key><array><string>auto</string><string>top</string><string>bottom</string></array>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>label</key><string>Уведомления</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Тёмный стиль карточек уведомлений</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>styleNotifications</string>
+      <key>default</key><true/>
+    </dict>
   </array>
 </dict>
 </plist>

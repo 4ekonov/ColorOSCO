@@ -11,6 +11,8 @@ extern __weak id OPCCRingerControl;   // заполняется хуком SBRin
 + (BOOL)showLabels;       // подписи под кнопками
 + (BOOL)shadeScaleIsSet;  // задан ли масштаб вручную (иначе подбирается под экран)
 + (BOOL)boolPref:(NSString *)key def:(BOOL)d;
++ (BOOL)isHomeButtonDevice;   // iPhone с кнопкой «Домой» (определяется автоматически)
++ (BOOL)bottomMode;           // шторка выезжает снизу (авто для iPhone с кнопкой, можно переопределить в настройках)
 // каталог кнопок
 + (NSArray<NSString *> *)allIDs;
 + (NSArray<NSString *> *)defaultIDs;
