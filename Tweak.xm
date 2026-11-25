@@ -194,6 +194,8 @@ static void OPCCInstallStrip(void) {
 %end
 
 #pragma mark - стиль уведомлений (тёмные полупрозрачные скруглённые карточки)
+@interface NCNotificationShortLookView : UIView @end
+@interface NCNotificationLongLookView : UIView @end
 static void OPCCStyleCard(UIView *v) {
     if (![OPCCActions boolPref:@"styleNotifications" def:YES]) return;
     v.layer.cornerRadius = 22; v.layer.cornerCurve = kCACornerCurveContinuous;
@@ -201,10 +203,10 @@ static void OPCCStyleCard(UIView *v) {
     for (UIView *s in v.subviews) if ([NSStringFromClass([s class]) containsString:@"MaterialView"]) s.hidden = YES;
 }
 %hook NCNotificationShortLookView
-- (void)layoutSubviews { %orig; OPCCStyleCard(self); }
+- (void)layoutSubviews { %orig; OPCCStyleCard((UIView *)self); }
 %end
 %hook NCNotificationLongLookView
-- (void)layoutSubviews { %orig; OPCCStyleCard(self); }
+- (void)layoutSubviews { %orig; OPCCStyleCard((UIView *)self); }
 %end
 
 #pragma mark - переключатель звука

@@ -5,7 +5,7 @@
 #import <dlfcn.h>
 
 #define RGB(r,g,b) [UIColor colorWithRed:(r)/255. green:(g)/255. blue:(b)/255. alpha:1]
-static UIColor *BG(void)    { return RGB(43,43,43); }
+__attribute__((unused)) static UIColor *BG(void)    { return RGB(43,43,43); }
 static UIColor *Glass(CGFloat a) { return [UIColor colorWithWhite:1 alpha:a]; }
 static UIColor *Tile(void)  { return Glass(0.17); }
 static UIColor *Knob(void)  { return Glass(0.26); }
