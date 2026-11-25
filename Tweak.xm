@@ -18,6 +18,7 @@
 @interface SpringBoard : UIApplication @end
 
 static const void *kOPCC = &kOPCC;
+static BOOL gShadeVisible = NO;   // Центр управления показан — полосы жестов не должны перехватывать касания
 static BOOL gDismissing = NO;   // идёт закрытие шторки — повторное открытие в этот момент ломало статус-бар
 static BOOL gAllowCC = NO;   // YES только в момент, когда шторку открываем мы сами
 
@@ -108,7 +109,13 @@ static void OPCCSuppressCover(BOOL on) { for (UIGestureRecognizer *g in gCoverGR
 
 static UILabel *gStatus;
 static void OPCCStatus(NSString *s) { OPCCLog(s); if (gStatus) gStatus.text = s; }
-static BOOL OPCCLocked(void) { id l = [objc_getClass("SBLockScreenManager") sharedInstance]; return [l respondsToSelector:@selector(isUILocked)] ? [l isUILocked] : YES; }
+static BOOL OPCCLocked(void) {
+    id l = [objc_getClass("SBLockScreenManager") sharedInstance];
+    if ([l respondsToSelector:@selector(isUILocked)]) return [l isUILocked];
+    SEL s = NSSelectorFromString(@"isLockScreenVisible");
+    if ([l respondsToSelector:s]) return ((BOOL (*)(id, SEL))objc_msgSend)(l, s);
+    return NO;
+}
 static BOOL OPCCCoverPresented(void) { id c = [objc_getClass("SBCoverSheetPresentationManager") sharedInstance]; return [c respondsToSelector:@selector(isPresented)] && [c isPresented]; }
 static BOOL OPCCCCPresented(void) { id c = [objc_getClass("SBControlCenterController") sharedInstance]; return [c respondsToSelector:@selector(isPresented)] && [c isPresented]; }
 
@@ -138,6 +145,36 @@ static void OPCCRescue(void) {
     });
 }
 
+static NSInteger OPCCEdgesOf(UIGestureRecognizer *g) {
+    SEL s = NSSelectorFromString(@"edges");
+    @try { if ([g respondsToSelector:s]) return (NSInteger)((NSUInteger (*)(id, SEL))objc_msgSend)(g, s); } @catch (__unused NSException *e) {}
+    @try { id v = [g valueForKey:@"edges"]; if ([v respondsToSelector:@selector(integerValue)]) return [v integerValue]; } @catch (__unused NSException *e) {}
+    return -1;
+}
+static void OPCCEnforceTop(void) {
+    if (![OPCCActions boolPref:@"customNotifications" def:YES]) return;
+    if (![OPCCActions bottomMode] && ![OPCCActions boolPref:@"topRightGesture" def:YES]) return;
+    NSMutableArray *all = [NSMutableArray array];
+    NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
+    if ([UIWindow respondsToSelector:ws]) wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)([UIWindow class], ws, YES, NO);
+    if (!wins) wins = [UIApplication sharedApplication].windows;
+    for (UIWindow *w in wins) { if (w == gStrip || w == gStripN) continue; OPCCCollect(w, all); }
+    @try {
+        id mgrCls = (id)objc_getClass("SBSystemGestureManager"); SEL mdm = NSSelectorFromString(@"mainDisplayManager");
+        id mgr = [mgrCls respondsToSelector:mdm] ? ((id (*)(id, SEL))objc_msgSend)(mgrCls, mdm) : nil;
+        for (NSString *k in @[@"gestureRecognizers", @"_gestureRecognizers", @"allGestureRecognizers"]) {
+            @try { id arr = [mgr valueForKey:k]; if ([arr isKindOfClass:[NSArray class]]) [all addObjectsFromArray:arr]; else if ([arr isKindOfClass:[NSSet class]]) [all addObjectsFromArray:[arr allObjects]]; } @catch (__unused NSException *e) {}
+        }
+    } @catch (__unused NSException *e) {}
+    for (UIGestureRecognizer *g in all) {
+        if (![g isKindOfClass:[UIGestureRecognizer class]] || !OPCCIsSystemGR(g)) continue;
+        if (OPCCEdgesOf(g) == (NSInteger)UIRectEdgeTop && g.enabled) {
+            g.enabled = NO;
+            OPCCLog([NSString stringWithFormat:@"ОТКЛЮЧЁН верхний жест: %@ | delegate=%@", NSStringFromClass([g class]), g.delegate ? NSStringFromClass([g.delegate class]) : @"-"]);
+        }
+    }
+}
+
 // Стандартная шторка уведомлений живёт в окне CoverSheet — на время нашей панели делаем это окно невидимым
 static void OPCCHideCoverWindows(BOOL hide) {
     NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
@@ -146,7 +183,7 @@ static void OPCCHideCoverWindows(BOOL hide) {
     for (UIWindow *w in wins) {
         if (w == gStrip || w == gStripN) continue;
         NSString *c = NSStringFromClass([w class]), *rc = w.rootViewController ? NSStringFromClass([w.rootViewController class]) : @"";
-        if ([c containsString:@"CoverSheet"] || [rc containsString:@"CoverSheet"]) { w.alpha = hide ? 0 : 1; OPCCLog([NSString stringWithFormat:@"cover window %@ alpha=%d", c, !hide]); }
+        if ([c containsString:@"CoverSheet"] || [rc containsString:@"CoverSheet"]) { CGFloat target = hide ? 0 : 1; if (w.alpha != target) { w.alpha = target; OPCCLog([NSString stringWithFormat:@"cover window %@ alpha=%.0f", c, target]); } }
     }
 }
 static void OPCCShowNotifs(void) {
@@ -177,7 +214,7 @@ static void OPCCRescueNotifs(void) {
     _start = [[ts anyObject] locationInView:nil]; _fired = NO;
     [self flash:YES]; OPCCLog([NSString stringWithFormat:@"touchesBegan x=%.0f y=%.0f", _start.x, _start.y]);
     if (_kind == 1 && OPCCLocked()) { [super touchesBegan:ts withEvent:e]; return; }   // экран блокировки: пусть работает стандартная панель
-    OPCCScan(); OPCCSuppressCover(YES);                 // глушим шторку уведомлений, пока палец в нашей зоне
+    OPCCEnforceTop();
     [super touchesBegan:ts withEvent:e];
 }
 - (void)touchesMoved:(NSSet *)ts withEvent:(UIEvent *)e {
@@ -189,7 +226,7 @@ static void OPCCRescueNotifs(void) {
         if (_kind == 1) OPCCShowNotifs(); else { OPCCPresentCC(); OPCCStatus(@"свайп: просим CC"); }
     }
 }
-- (void)finish { OPCCSuppressCover(NO); [self flash:NO]; }
+- (void)finish { [self flash:NO]; }
 - (void)touchesEnded:(NSSet *)ts withEvent:(UIEvent *)e { [super touchesEnded:ts withEvent:e]; if (_fired) { if (_kind == 1) OPCCRescueNotifs(); else OPCCRescue(); } [self performSelector:@selector(finish) withObject:nil afterDelay:0.3]; }
 - (void)touchesCancelled:(NSSet *)ts withEvent:(UIEvent *)e {
     OPCCLog(@"touchesCancelled (система забрала касание)");
@@ -200,8 +237,13 @@ static void OPCCRescueNotifs(void) {
 }
 @end
 
+@interface OPCCStripWindow : UIWindow @end
+@implementation OPCCStripWindow
+- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { if (gShadeVisible || [OPCCNotifPanel isShown]) return nil; return [super hitTest:p withEvent:e]; }
+@end
+
 static UIWindow *OPCCMakeStrip(CGRect f, NSInteger kind, BOOL label) {
-    UIWindow *w = [[UIWindow alloc] initWithFrame:f];
+    UIWindow *w = [[OPCCStripWindow alloc] initWithFrame:f];
     w.windowLevel = 100000; w.backgroundColor = [UIColor clearColor];
     UIViewController *vc = [UIViewController new];
     OPCCStripView *sv = [[OPCCStripView alloc] initWithFrame:w.bounds]; sv.kind = kind; vc.view = sv; [sv flash:NO]; w.rootViewController = vc;
@@ -218,6 +260,13 @@ static void OPCCInstallStrips(void) {
     // Уведомления: сверху слева (на iPhone с кнопкой — по всей ширине)
     if (!gStripN && [OPCCActions boolPref:@"customNotifications" def:YES]) gStripN = OPCCMakeStrip(bottom ? CGRectMake(0, 0, W, 28) : CGRectMake(0, 0, W * 0.5, 28), 1, bottom);
     OPCCLog(@"полосы жестов установлены");
+    [OPCCNotifPanel setOnHide:^{ OPCCHideCoverWindows(NO); }];
+    OPCCEnforceTop();
+    [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *tm) {       // жесты могут пересоздаваться системой — применяем снова
+        OPCCEnforceTop();
+        if (!OPCCCCPresented()) gShadeVisible = NO;
+        if (![OPCCNotifPanel isShown]) OPCCHideCoverWindows(NO);                          // страховка: окно шторки не должно остаться невидимым
+    }];
 }
 
 #pragma mark - сбор уведомлений для своей панели
@@ -304,14 +353,19 @@ static void OPCCStyleCard(UIView *v) {
     v.frame = host.bounds;
     [host bringSubviewToFront:v];
     // Системные тап-жесты «закрыть по касанию» срабатывали на наших кнопках — отключаем их
-    for (UIView *h in @[self.view, self.view.superview ?: self.view]) {
-        for (UIGestureRecognizer *g in h.gestureRecognizers)
-            if ([g isKindOfClass:[UITapGestureRecognizer class]]) g.enabled = NO;
+    // Стандартный Центр управления закрывается тапом вне своих модулей (например по «⋯» вверху) — отключаем такие жесты по всей цепочке до окна
+    for (UIView *h = self.view; h; h = h.superview) {
+        if (h == v) continue;
+        for (UIGestureRecognizer *g in h.gestureRecognizers) {
+            NSString *gc = NSStringFromClass([g class]);
+            if ([g isKindOfClass:[UITapGestureRecognizer class]] || [gc containsString:@"Dismiss"] || [gc containsString:@"Tap"]) g.enabled = NO;
+        }
     }
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
+    gShadeVisible = YES;
     OPCCView *v = objc_getAssociatedObject(self, kOPCC);
     UIWindow *w = self.view.window;
     if (w && v.superview != w) {            // кладём нашу шторку прямо в окно, чтобы она не ехала снизу вместе со стоковой
@@ -323,6 +377,7 @@ static void OPCCStyleCard(UIView *v) {
 
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
+    if (self.presentedViewController) return;     // поверх показано другое окно — шторку не закрываем
     gDismissing = YES;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gDismissing = NO; });   // страховка, если закрытие отменили
     [(OPCCView *)objc_getAssociatedObject(self, kOPCC) closeForSystemDismiss];
@@ -330,7 +385,7 @@ static void OPCCStyleCard(UIView *v) {
 
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
-    gDismissing = NO;
+    gDismissing = NO; gShadeVisible = NO;
     OPCCView *v = objc_getAssociatedObject(self, kOPCC);
     [v stop];
     if (v.superview != self.view) { [self.view addSubview:v]; v.frame = self.view.bounds; }

@@ -131,6 +131,7 @@ static void ToggleScreenRecording(void) {
 + (void)syncPrefs { CFPreferencesAppSynchronize((__bridge CFStringRef)kDomain); }
 + (CGFloat)shadeScale  { id v = [self pref:@"shadeScale"];  return [v respondsToSelector:@selector(doubleValue)] ? MAX(0.5, MIN(2.0, [v doubleValue])) : 1.1; }
 + (CGFloat)buttonScale { id v = [self pref:@"buttonScale"]; return [v respondsToSelector:@selector(doubleValue)] ? MAX(0.7, MIN(1.8, [v doubleValue])) : 1.2; }
++ (CGFloat)topOffset { id v = [self pref:@"topOffset"]; return [v respondsToSelector:@selector(doubleValue)] ? MAX(-60, MIN(80, [v doubleValue])) : -6; }
 + (BOOL)shadeScaleIsSet { return [[self pref:@"shadeScale"] respondsToSelector:@selector(doubleValue)]; }
 + (BOOL)boolPref:(NSString *)k def:(BOOL)d { id v = [self pref:k]; return [v respondsToSelector:@selector(boolValue)] ? [v boolValue] : d; }
 + (BOOL)isHomeButtonDevice {

@@ -8,6 +8,7 @@ extern __weak id OPCCRingerControl;   // заполняется хуком SBRin
 + (void)syncPrefs;
 + (CGFloat)shadeScale;    // масштаб шторки
 + (CGFloat)buttonScale;   // размер круглых кнопок
++ (CGFloat)topOffset;      // сдвиг шторок по вертикали (pt), можно отрицательный
 + (BOOL)showLabels;       // подписи под кнопками
 + (BOOL)shadeScaleIsSet;  // задан ли масштаб вручную (иначе подбирается под экран)
 + (BOOL)boolPref:(NSString *)key def:(BOOL)d;

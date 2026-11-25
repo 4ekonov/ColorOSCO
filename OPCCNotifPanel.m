@@ -127,7 +127,7 @@ static UIImage *AppIcon(NSString *b) {
 @end
 
 @implementation OPCCNotifView {
-    UIView *_shade, *_bg; UIScrollView *_scroll; UILabel *_dateL; OPCCNBtn *_bell, *_x;
+    UIView *_shade, *_bg; UIScrollView *_scroll; UILabel *_dateL, *_emptyL; OPCCNBtn *_bell, *_x;
     NSMutableArray<OPCCNotifCard *> *_cards; NSMutableSet *_expGroups, *_expMsgs;
     UIPanGestureRecognizer *_panGR; UITapGestureRecognizer *_tapGR;
     BOOL _closing, _panActive, _suppress; NSInteger _gen; CGFloat _u;
@@ -141,6 +141,7 @@ static UIImage *AppIcon(NSString *b) {
         UIView *dim = [UIView new]; dim.backgroundColor = W_(0, 0.38); [fx.contentView addSubview:dim]; _bg = fx; [_shade addSubview:_bg];
         _scroll = [UIScrollView new]; _scroll.showsVerticalScrollIndicator = NO; _scroll.bounces = NO; _scroll.delaysContentTouches = NO; _scroll.clipsToBounds = NO; [_shade addSubview:_scroll];
         _dateL = [UILabel new]; _dateL.textColor = UIColor.whiteColor; [_shade addSubview:_dateL];
+        _emptyL = [UILabel new]; _emptyL.textColor = W_(1, 0.6); _emptyL.numberOfLines = 0; _emptyL.textAlignment = NSTextAlignmentCenter; _emptyL.font = [UIFont systemFontOfSize:12]; _emptyL.hidden = YES; [_shade addSubview:_emptyL];
         _bell = [OPCCNBtn new]; UIImageView *bi = [[UIImageView alloc] initWithImage:[NSym(@"bell", 17, UIImageSymbolWeightRegular) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
         bi.tintColor = UIColor.whiteColor; bi.contentMode = UIViewContentModeCenter; bi.tag = 9; bi.userInteractionEnabled = NO; [_bell addSubview:bi]; [_shade addSubview:_bell];
         [_bell addTarget:self action:@selector(bellTap) forControlEvents:UIControlEventTouchUpInside];
@@ -178,6 +179,8 @@ static UIImage *AppIcon(NSString *b) {
         else for (NSUInteger i = 0; i < items.count; i++) [_cards addObject:[self makeCard:@[items[i]] collapsed:NO mode:(items.count > 1 && i == 0) ? 2 : 0]];
     }
     for (UIView *c in _cards) [_scroll addSubview:c];
+    _emptyL.hidden = _cards.count > 0 || ![OPCCActions boolPref:@"debugStrip" def:YES];
+    _emptyL.text = [NSString stringWithFormat:@"Уведомлений нет (захвачено: %lu)\nЕсли они есть — пришлите OPCC_notifs.txt", (unsigned long)[OPCCNotifStore all].count];
     [self setNeedsLayout];
 }
 - (void)relayoutAnimated {
@@ -268,7 +271,7 @@ static UIImage *AppIcon(NSString *b) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height, u = W / 316.; _u = u;
-    CGFloat top = MAX(self.safeAreaInsets.top, 20), cy = top + 26*u, m = 12*u;
+    CGFloat top = MAX(self.safeAreaInsets.top, 20), cy = top + 26*u + [OPCCActions topOffset], m = 12*u;
     CGRect full = CGRectMake(0, 0, W, H); _bg.frame = full; ((UIVisualEffectView *)_bg).contentView.subviews.firstObject.frame = full;
     _dateL.frame = CGRectMake(m + 4*u, cy - 10*u, 220*u, 20*u);
     _bell.frame = CGRectMake(W - m - 4*u - 30*u, cy - 15*u, 30*u, 30*u); [_bell viewWithTag:9].frame = _bell.bounds;
@@ -287,6 +290,7 @@ static UIImage *AppIcon(NSString *b) {
     if (!_scroll.scrollEnabled && _scroll.contentOffset.y != 0) _scroll.contentOffset = CGPointZero;
     _x.bounds = CGRectMake(0, 0, xD, xD); _x.layer.cornerRadius = xD/2; _x.center = CGPointMake(W/2, H - xBottom - xD/2); [_x viewWithTag:9].frame = _x.bounds;
     _x.hidden = (_cards.count == 0);
+    _emptyL.frame = CGRectMake(20*u, H/2 - 30*u, W - 40*u, 60*u);
     NSDateFormatter *tf = [NSDateFormatter new]; tf.dateFormat = @"HH:mm";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"d MMM, EE"; df.locale = [NSLocale localeWithLocaleIdentifier:@"ru_RU"];
     NSString *ts = [tf stringFromDate:[NSDate date]], *ds = [df stringFromDate:[NSDate date]];
@@ -318,13 +322,14 @@ static UIImage *AppIcon(NSString *b) {
 
 #pragma mark - окно панели
 @implementation OPCCNotifPanel
-static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown;
+static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown; static void (^gOnHide)(void);
 + (BOOL)isShown { return gShown; }
++ (void)setOnHide:(void (^)(void))b { gOnHide = [b copy]; }
 + (void)show {
     if (gShown) return; gShown = YES;
     if (!gWin) {
         CGRect b = [UIScreen mainScreen].bounds;
-        gWin = [[UIWindow alloc] initWithFrame:b]; gWin.windowLevel = UIWindowLevelStatusBar - 1;   // ниже статус-бара: он остаётся видимым
+        gWin = [[UIWindow alloc] initWithFrame:b]; gWin.windowLevel = 3000;   // гарантированно выше приложений и рабочего стола
         gWin.backgroundColor = [UIColor clearColor];
         UIViewController *vc = [UIViewController new]; gView = [[OPCCNotifView alloc] initWithFrame:b]; vc.view = gView; gWin.rootViewController = vc;
     }
@@ -332,6 +337,6 @@ static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown;
 }
 + (void)hide {
     if (!gShown) return; gShown = NO;
-    [gView closeAnimated:^{ gWin.hidden = YES; }];
+    [gView closeAnimated:^{ gWin.hidden = YES; if (gOnHide) gOnHide(); }];
 }
 @end

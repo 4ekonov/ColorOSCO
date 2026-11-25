@@ -21,4 +21,5 @@ extern NSString *const OPCCNotifsChanged;
 + (void)show;
 + (void)hide;
 + (BOOL)isShown;
++ (void)setOnHide:(void (^)(void))block;   // вызывается, когда панель полностью скрыта
 @end

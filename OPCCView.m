@@ -347,7 +347,7 @@ static void MRInit(void) {
 @end
 
 @implementation OPCCView {
-    UIView *_shade, *_bg; UIScrollView *_content; BOOL _closing, _panActive, _bottom; NSInteger _gen;
+    UIView *_shade, *_bg; UIScrollView *_content; BOOL _closing, _panActive, _bottom; NSInteger _gen; UIView *_menu, *_menuDim;
     UIPanGestureRecognizer *_panGR; UITapGestureRecognizer *_tapGR;
     UILabel *_date, *_hint;
     OPCCPress *_edit, *_gear, *_more;
@@ -447,7 +447,7 @@ static void MRInit(void) {
         u = MIN(u, uH);
     }
     u = MAX(u, 0.4 * W / 316.); _u = u;
-    CGFloat cy = topSafe + 18*u;
+    CGFloat cy = topSafe + 18*u + [OPCCActions topOffset];
     #define X(v) (W/2 + ((v) - 157.5)*u)
     #define Y(v) (cy + ((v) - 47)*u)
     CGRect full = CGRectMake(0, 0, W, H); _bg.frame = full; _content.frame = full;
@@ -656,7 +656,7 @@ static void MRInit(void) {
 - (void)bgTap { [self closeAnimated:YES]; }
 // Плавное закрытие: шторка уезжает вверх и гаснет, и только потом закрывается системный контроллер
 - (void)closeAnimated:(BOOL)callSystem {
-    if (_closing) return; _closing = YES;
+    if (_closing) return; _closing = YES; [self hideMenu];
     NSInteger gen = _gen;
     CGFloat H = self.bounds.size.height;
     [UIView animateWithDuration:0.34 delay:0 options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
@@ -665,14 +665,35 @@ static void MRInit(void) {
 }
 - (void)closeForSystemDismiss { [self closeAnimated:NO]; }
 - (void)doGear { Haptic(); [OPCCActions openApp:@"com.apple.Preferences"]; }
-- (void)doMore {
-    Haptic(); if (!self.presentBlock) return;
-    UIAlertController *a = [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    [a addAction:[UIAlertAction actionWithTitle:@"Редактировать кнопки" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { [self setEditing:YES animated:YES]; }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"Сбросить раскладку" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *x) { [OPCCActions saveActiveIDs:[OPCCActions defaultIDs]]; [self reloadButtons]; }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil]];
-    a.popoverPresentationController.sourceView = _more; a.popoverPresentationController.sourceRect = _more.bounds;
-    self.presentBlock(a);
+// Меню «⋯» рисуем сами внутри шторки: системный action sheet закрывал/ломал Центр управления
+- (void)doMore { Haptic(); if (_menu) [self hideMenu]; else [self showMenu]; }
+- (void)hideMenu {
+    if (!_menu) return; UIView *m = _menu, *d = _menuDim; _menu = nil; _menuDim = nil;
+    [UIView animateWithDuration:0.18 animations:^{ m.alpha = 0; m.transform = CGAffineTransformMakeScale(0.9, 0.9); } completion:^(BOOL f) { [m removeFromSuperview]; [d removeFromSuperview]; }];
+}
+- (void)showMenu {
+    CGFloat u = _u;
+    UIControl *dim = [[UIControl alloc] initWithFrame:self.bounds]; dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [dim addTarget:self action:@selector(hideMenu) forControlEvents:UIControlEventTouchDown]; [_shade addSubview:dim]; _menuDim = dim;
+    UIVisualEffectView *m = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark]];
+    CGFloat w = 210*u, rh = 44*u; CGRect fr = CGRectMake(CGRectGetMaxX(_more.frame) - w, CGRectGetMaxY(_more.frame) + 6*u, w, rh*2);
+    m.bounds = CGRectMake(0, 0, w, rh*2); m.layer.anchorPoint = CGPointMake(1, 0); m.layer.position = CGPointMake(CGRectGetMaxX(fr), CGRectGetMinY(fr));
+    m.layer.cornerRadius = 16*u; m.layer.cornerCurve = kCACornerCurveContinuous; m.clipsToBounds = YES;
+    NSArray *titles = @[@"Редактировать кнопки", @"Сбросить раскладку"];
+    for (int i = 0; i < 2; i++) {
+        OPCCPress *b = [OPCCPress new]; b.frame = CGRectMake(0, i*rh, w, rh); b.tag = i; b.pressScale = 0.97;
+        UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(16*u, 0, w - 32*u, rh)]; l.text = titles[i]; l.textColor = i == 1 ? RGB(255,105,97) : UIColor.whiteColor; l.font = [UIFont systemFontOfSize:14*u]; l.userInteractionEnabled = NO;
+        [b addSubview:l]; [b addTarget:self action:@selector(menuPick:) forControlEvents:UIControlEventTouchUpInside]; [m.contentView addSubview:b];
+    }
+    UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(0, rh - 0.5, w, 0.5)]; sep.backgroundColor = Glass(0.18); [m.contentView addSubview:sep];
+    [_shade addSubview:m]; _menu = m;
+    m.alpha = 0; m.transform = CGAffineTransformMakeScale(0.8, 0.8);
+    [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.3 options:0 animations:^{ m.alpha = 1; m.transform = CGAffineTransformIdentity; } completion:nil];
+}
+- (void)menuPick:(OPCCPress *)b {
+    NSInteger i = b.tag; [self hideMenu];
+    if (i == 0) [self setEditing:YES animated:YES];
+    else { [OPCCActions saveActiveIDs:[OPCCActions defaultIDs]]; [self reloadButtons]; }
 }
 
 #pragma mark состояние
