@@ -17,6 +17,7 @@
 @interface SpringBoard : UIApplication @end
 
 static const void *kOPCC = &kOPCC;
+static BOOL gDismissing = NO;   // идёт закрытие шторки — повторное открытие в этот момент ломало статус-бар
 static BOOL gAllowCC = NO;   // YES только в момент, когда шторку открываем мы сами
 
 #pragma mark - диагностика: список методов классов (поможет, если жест не сработает)
@@ -111,6 +112,8 @@ static BOOL OPCCCoverPresented(void) { id c = [objc_getClass("SBCoverSheetPresen
 static BOOL OPCCCCPresented(void) { id c = [objc_getClass("SBControlCenterController") sharedInstance]; return [c respondsToSelector:@selector(isPresented)] && [c isPresented]; }
 
 static void OPCCPresentCC(void) {
+    if (gDismissing) { OPCCStatus(@"ждём закрытия"); return; }
+    if (OPCCCCPresented()) return;
     id cc = [objc_getClass("SBControlCenterController") sharedInstance];
     gAllowCC = YES;
     if ([cc respondsToSelector:@selector(presentAnimated:completion:)]) [cc presentAnimated:YES completion:nil];
@@ -188,6 +191,7 @@ static void OPCCInstallStrip(void) {
 #pragma mark - отключение стандартного жеста Центра управления (снизу)
 %hook SBControlCenterController
 - (BOOL)_shouldAllowControlCenterGesture {
+    if (gDismissing) return NO;
     if (![OPCCActions bottomMode] && !gAllowCC && [OPCCActions boolPref:@"disableBottomGesture" def:YES]) return NO;
     return %orig;
 }
@@ -225,8 +229,11 @@ static void OPCCStyleCard(UIView *v) {
     OPCCView *v = [[OPCCView alloc] initWithFrame:self.view.bounds];
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     v.dismissBlock = ^{
+        gDismissing = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gDismissing = NO; });   // страховка
         id cc = [objc_getClass("SBControlCenterController") sharedInstance];
-        if ([cc respondsToSelector:@selector(dismissAnimated:)]) [cc dismissAnimated:YES];
+        // наша шторка к этому моменту уже уехала, поэтому системное закрытие делаем мгновенным — так окно «ожидания» минимально
+        if ([cc respondsToSelector:@selector(dismissAnimated:)]) [cc dismissAnimated:NO];
         else [weakSelf dismissViewControllerAnimated:YES completion:nil];
     };
     v.presentBlock = ^(UIViewController *vc) { [weakSelf presentViewController:vc animated:YES completion:nil]; };
@@ -265,11 +272,14 @@ static void OPCCStyleCard(UIView *v) {
 
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
+    gDismissing = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ gDismissing = NO; });   // страховка, если закрытие отменили
     [(OPCCView *)objc_getAssociatedObject(self, kOPCC) closeForSystemDismiss];
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
     %orig;
+    gDismissing = NO;
     OPCCView *v = objc_getAssociatedObject(self, kOPCC);
     [v stop];
     if (v.superview != self.view) { [self.view addSubview:v]; v.frame = self.view.bounds; }

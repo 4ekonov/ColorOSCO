@@ -347,7 +347,7 @@ static void MRInit(void) {
 @end
 
 @implementation OPCCView {
-    UIView *_shade, *_bg; UIScrollView *_content; BOOL _closing, _panActive, _bottom;
+    UIView *_shade, *_bg; UIScrollView *_content; BOOL _closing, _panActive, _bottom; NSInteger _gen;
     UIPanGestureRecognizer *_panGR; UITapGestureRecognizer *_tapGR;
     UILabel *_date, *_hint;
     OPCCPress *_edit, *_gear, *_more;
@@ -472,9 +472,14 @@ static void MRInit(void) {
     _trayTitle.font = [UIFont systemFontOfSize:12*u weight:UIFontWeightMedium]; _trayTitle.frame = CGRectMake(16*u, 10*u, 220*u, 18*u);
     _trayScroll.frame = CGRectMake(0, 34*u, 255*u, trayH - 34*u);
     [self layoutTray];
-    CGFloat bottom = MAX(CGRectGetMaxY(_tray.frame), Y(350 + gridH + 16)) + 40*u;   // если шторка выше экрана — её можно прокрутить
-    _content.contentSize = CGSizeMake(W, MAX(H, bottom));
-    _content.scrollEnabled = bottom > H + 1;
+    // Реальная нижняя граница контента (в обычном режиме лоток спрятан и не считается)
+    CGFloat bottom = Y(scrollTop + gridH + 8) + 6*u + 12*u;
+    if (_editing) bottom = MAX(bottom, CGRectGetMaxY(_tray.frame) + 12*u);
+    BOOL fits = bottom <= H + 6;                      // всё влезает — прокрутки по вертикали нет вообще
+    _content.contentSize = CGSizeMake(W, fits ? H : bottom);
+    _content.scrollEnabled = !fits;
+    _content.alwaysBounceVertical = NO; _content.bounces = NO;
+    if (fits && _content.contentOffset.y != 0) _content.contentOffset = CGPointZero;
 
     static NSDateFormatter *df;
     if (!df) { df = [NSDateFormatter new]; df.dateFormat = @"EEE, d MMM"; df.locale = [NSLocale localeWithLocaleIdentifier:@"ru_RU"]; }
@@ -652,10 +657,11 @@ static void MRInit(void) {
 // Плавное закрытие: шторка уезжает вверх и гаснет, и только потом закрывается системный контроллер
 - (void)closeAnimated:(BOOL)callSystem {
     if (_closing) return; _closing = YES;
+    NSInteger gen = _gen;
     CGFloat H = self.bounds.size.height;
     [UIView animateWithDuration:0.34 delay:0 options:UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionBeginFromCurrentState animations:^{
         self->_shade.transform = CGAffineTransformMakeTranslation(0, (self->_bottom ? 1 : -1) * H * 0.6); self->_shade.alpha = 0;
-    } completion:^(BOOL f) { if (callSystem && self.dismissBlock) self.dismissBlock(); }];
+    } completion:^(BOOL f) { if (f && gen == self->_gen && callSystem && self.dismissBlock) self.dismissBlock(); }];
 }
 - (void)closeForSystemDismiss { [self closeAnimated:NO]; }
 - (void)doGear { Haptic(); [OPCCActions openApp:@"com.apple.Preferences"]; }
@@ -690,7 +696,7 @@ static void MRInit(void) {
     [self setNeedsLayout]; [self layoutIfNeeded]; [self refreshAll]; [_player refresh];
     [_timer invalidate]; _timer = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self selector:@selector(refreshAll) userInfo:nil repeats:YES];
     CGFloat H = self.bounds.size.height;
-    _bottom = [OPCCActions bottomMode]; CGFloat dir = _bottom ? 1 : -1;   // iPhone с кнопкой: шторка выезжает снизу
+    _gen++; _bottom = [OPCCActions bottomMode]; CGFloat dir = _bottom ? 1 : -1;   // iPhone с кнопкой: шторка выезжает снизу
     [_shade.layer removeAllAnimations]; _panActive = NO;
     _shade.alpha = 0; _shade.transform = CGAffineTransformMakeTranslation(0, dir * H * 0.6);
     [UIView animateWithDuration:0.55 delay:0 usingSpringWithDamping:0.92 initialSpringVelocity:0.4 options:UIViewAnimationOptionAllowUserInteraction animations:^{
