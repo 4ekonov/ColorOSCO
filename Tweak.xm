@@ -263,7 +263,8 @@ static void OPCCRescueNotifs(void) {
 - (void)touchesCancelled:(NSSet *)ts withEvent:(UIEvent *)e {
     OPCCLog(@"touchesCancelled (система забрала касание)");
     CGPoint p = [[ts anyObject] locationInView:nil];
-    if (!_fired && p.y - _start.y > 3 && !(_kind == 1 && OPCCLocked())) { _fired = YES; if (_kind == 1) OPCCShowNotifs(); else OPCCPresentCC(); }
+    // В приложениях система отбирает касание сразу, ещё до заметного движения — это и есть её жест «шторка сверху», поэтому отмену тоже считаем свайпом
+    if (!_fired && !(_kind == 1 && OPCCLocked())) { _fired = YES; OPCCLog(@"отмена касания = свайп"); if (_kind == 1) OPCCShowNotifs(); else OPCCPresentCC(); }
     if (_fired) { if (_kind == 1) OPCCRescueNotifs(); else OPCCRescue(); }   // система отобрала касание — доводим дело до конца сами
     [super touchesCancelled:ts withEvent:e]; [self performSelector:@selector(finish) withObject:nil afterDelay:0.3];
 }

@@ -38,8 +38,13 @@ static UIImage *AppIcon(NSString *b) {
 }
 @end
 
+@interface OPCCNScroll : UIScrollView @end
+@implementation OPCCNScroll
+- (BOOL)touchesShouldCancelInContentView:(UIView *)view { return YES; }
+@end
+
 #pragma mark - карточка уведомления
-@interface OPCCNotifCard : UIControl
+@interface OPCCNotifCard : UIControl <UIGestureRecognizerDelegate>
 @property (nonatomic, strong) NSArray<OPCCNotif *> *items;
 @property (nonatomic) BOOL collapsedGroup, msgExpanded, headerOnly, lockMode;
 @property (nonatomic) NSInteger chevMode;
@@ -71,10 +76,11 @@ static UIImage *AppIcon(NSString *b) {
         _chevIv = [UIImageView new]; _chevIv.contentMode = UIViewContentModeCenter; _chevIv.tintColor = UIColor.whiteColor; _chevIv.userInteractionEnabled = NO; [_chev addSubview:_chevIv];
         [_badge addTarget:self action:@selector(badgeTap) forControlEvents:UIControlEventTouchUpInside];
         [_chev addTarget:self action:@selector(chevTap) forControlEvents:UIControlEventTouchUpInside];
-        [self addTarget:self action:@selector(tap) forControlEvents:UIControlEventTouchUpInside];
+        UITapGestureRecognizer *tg = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tap)]; tg.delegate = self; [self addGestureRecognizer:tg];
     }
     return self;
 }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { return ![t.view isKindOfClass:[OPCCNBtn class]]; }   // кнопки внутри карточки обрабатывают нажатия сами
 - (void)tap { if (_onTap) _onTap(self); }
 - (void)badgeTap { if (_onBadge) _onBadge(self); }
 - (void)chevTap { if (_onChevron) _onChevron(self); }
@@ -185,7 +191,7 @@ static UIImage *AppIcon(NSString *b) {
         _shade = [[UIView alloc] initWithFrame:self.bounds]; _shade.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight; [self addSubview:_shade];
         UIVisualEffectView *fx = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
         UIView *dim = [UIView new]; dim.backgroundColor = W_(0, 0.38); [fx.contentView addSubview:dim]; _bg = fx; [_shade addSubview:_bg];
-        _scroll = [UIScrollView new]; _scroll.showsVerticalScrollIndicator = NO; _scroll.bounces = NO; _scroll.delaysContentTouches = NO; _scroll.clipsToBounds = lock; [_shade addSubview:_scroll];
+        _scroll = [OPCCNScroll new]; _scroll.canCancelContentTouches = YES; _scroll.showsVerticalScrollIndicator = NO; _scroll.bounces = NO; _scroll.delaysContentTouches = NO; _scroll.clipsToBounds = lock; [_shade addSubview:_scroll];
         _dateL = [UILabel new]; _dateL.textColor = UIColor.whiteColor; [_shade addSubview:_dateL];
         _emptyL = [UILabel new]; _emptyL.textColor = W_(1, 0.6); _emptyL.numberOfLines = 0; _emptyL.textAlignment = NSTextAlignmentCenter; _emptyL.font = [UIFont systemFontOfSize:12]; _emptyL.hidden = YES; [_shade addSubview:_emptyL];
         _bell = [OPCCNBtn new]; UIImageView *bi = [[UIImageView alloc] initWithImage:[NSym(@"bell", 17, UIImageSymbolWeightRegular) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
