@@ -191,6 +191,7 @@ static UIImage *AppIcon(NSString *b) {
         _bell = [OPCCNBtn new]; UIImageView *bi = [[UIImageView alloc] initWithImage:[NSym(@"bell", 17, UIImageSymbolWeightRegular) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
         bi.tintColor = UIColor.whiteColor; bi.contentMode = UIViewContentModeCenter; bi.tag = 9; bi.userInteractionEnabled = NO; [_bell addSubview:bi]; [_shade addSubview:_bell];
         [_bell addTarget:self action:@selector(bellTap) forControlEvents:UIControlEventTouchUpInside];
+        [_bell addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(bellLong:)]];
         _x = [OPCCNBtn new]; _x.backgroundColor = W_(0, 0.42);
         UIImageView *xi = [[UIImageView alloc] initWithImage:[NSym(@"xmark", 15, UIImageSymbolWeightMedium) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
         xi.tintColor = UIColor.whiteColor; xi.contentMode = UIViewContentModeCenter; xi.tag = 9; xi.userInteractionEnabled = NO; [_x addSubview:xi]; [_shade addSubview:_x];
@@ -234,7 +235,7 @@ static UIImage *AppIcon(NSString *b) {
     }
     for (UIView *c in _cards) [_scroll addSubview:c];
     _emptyL.hidden = _lock || _cards.count > 0 || ![OPCCActions boolPref:@"debugStrip" def:YES];
-    _emptyL.text = [NSString stringWithFormat:@"Уведомлений нет (захвачено: %lu)\nЕсли они есть — пришлите OPCC_notifs.txt", (unsigned long)[OPCCNotifStore all].count];
+    _emptyL.text = [NSString stringWithFormat:@"Уведомлений нет (захвачено: %lu)\nЕсли они есть — пришлите OPCC_notifs.txt\nДолгое нажатие на колокольчик — тестовые уведомления", (unsigned long)[OPCCNotifStore all].count];
     [self setNeedsLayout];
 }
 - (void)relayoutAnimated {
@@ -285,6 +286,10 @@ static UIImage *AppIcon(NSString *b) {
             }];
         } else [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0 options:0 animations:^{ c.transform = CGAffineTransformIdentity; c.alpha = 1; } completion:nil];
     }
+}
+- (void)bellLong:(UILongPressGestureRecognizer *)g {      // долгое нажатие на колокольчик — тестовые уведомления вкл/выкл
+    if (g.state != UIGestureRecognizerStateBegan) return;
+    BOOL now = ![OPCCNotifStore testMode]; Hap(); [OPCCActions setBoolPref:@"testNotifs" value:now]; [OPCCNotifStore setTestMode:now];
 }
 - (void)bellTap { Hap(); [OPCCNotifPanel hide]; dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.45 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSURL *u = [NSURL URLWithString:@"App-prefs:NOTIFICATIONS_ID"]; if (u) [[UIApplication sharedApplication] openURL:u options:@{} completionHandler:nil]; }); }
 - (void)clearAll {
@@ -422,7 +427,7 @@ static UIWindow *gLockWin; static OPCCNotifView *gLockView;
     if (want) {
         if (!gLockWin) {
             CGRect b = [UIScreen mainScreen].bounds; CGRect f = CGRectMake(0, b.size.height * 0.30, b.size.width, b.size.height * 0.50);
-            gLockWin = [[UIWindow alloc] initWithFrame:f]; gLockWin.windowLevel = 2500; gLockWin.backgroundColor = [UIColor clearColor];
+            gLockWin = [[UIWindow alloc] initWithFrame:f]; gLockWin.windowLevel = 99000;   // выше окна экрана блокировки gLockWin.backgroundColor = [UIColor clearColor];
             UIViewController *vc = [UIViewController new]; gLockView = [[OPCCNotifView alloc] initWithFrame:gLockWin.bounds lock:YES]; vc.view = gLockView; gLockWin.rootViewController = vc;
         }
         if (gLockWin.hidden) { gLockWin.hidden = NO; [gLockView reload]; }

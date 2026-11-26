@@ -131,6 +131,17 @@
       <key>key</key><string>lockNotifications</string>
       <key>default</key><true/>
     </dict>
+    <dict>
+      <key>cell</key><string>PSGroupCell</string>
+      <key>footerText</key><string>Добавляет 10 тестовых уведомлений (группа сообщений, длинное письмо, календарь и др.), чтобы проверить раскрытие, группы, кнопки действий, смахивание и экран блокировки. Включается и выключается в течение пары секунд. Также: долгое нажатие на колокольчик в панели уведомлений.</string>
+    </dict>
+    <dict>
+      <key>cell</key><string>PSSwitchCell</string>
+      <key>label</key><string>Тестовые уведомления</string>
+      <key>defaults</key><string>com.opcc.coloroscc</string>
+      <key>key</key><string>testNotifs</string>
+      <key>default</key><false/>
+    </dict>
   </array>
 </dict>
 </plist>

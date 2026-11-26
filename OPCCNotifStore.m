@@ -27,6 +27,15 @@ static void NLog(NSString *s) {
 @implementation OPCCNotif
 @end
 
+// Поддельное действие для тестовых уведомлений («Прочитано», «Архивировать» и т. п.): просто убирает свою карточку
+@interface OPCCFakeAction : NSObject
+@property (nonatomic, copy) NSString *title, *ownerIdent;
+@end
+@implementation OPCCFakeAction
+@end
+
+static BOOL gTest = NO;
+
 @implementation OPCCNotifStore
 + (NSMutableArray *)items { static NSMutableArray *a; static dispatch_once_t t; dispatch_once(&t, ^{ a = [NSMutableArray array]; }); return a; }
 + (NSArray *)all { @synchronized (self) { return [[self items] copy]; } }
@@ -87,7 +96,44 @@ static void NLog(NSString *s) {
         NLog(@"clear: clearAction недоступен");
     } @catch (__unused NSException *e) { NLog(@"clear: исключение"); }
 }
++ (BOOL)testMode { return gTest; }
++ (OPCCNotif *)fakeIdent:(NSString *)ident bundle:(NSString *)b app:(NSString *)app title:(NSString *)t msg:(NSString *)m ago:(NSTimeInterval)sec actions:(NSArray *)titles {
+    OPCCNotif *n = [OPCCNotif new]; n.ident = ident; n.bundleID = b; n.appName = app; n.title = t; n.message = m; n.date = [NSDate dateWithTimeIntervalSinceNow:-sec];
+    NSMutableArray *acts = [NSMutableArray array];
+    for (NSString *tt in titles) { OPCCFakeAction *a = [OPCCFakeAction new]; a.title = tt; a.ownerIdent = ident; [acts addObject:a]; }
+    n.actions = acts; return n;
+}
++ (void)setTestMode:(BOOL)on {
+    if (on == gTest) return; gTest = on;
+    @synchronized (self) {
+        NSMutableArray *a = [self items];
+        for (NSInteger i = (NSInteger)a.count - 1; i >= 0; i--) if ([((OPCCNotif *)a[i]).ident hasPrefix:@"opcc-test-"]) [a removeObjectAtIndex:i];
+        if (on) {
+            NSString *sms = @"com.apple.MobileSMS";
+            [a addObjectsFromArray:@[
+              [self fakeIdent:@"opcc-test-1" bundle:sms app:@"Сообщения" title:@"Анна" msg:@"Привет! Ты сегодня будешь на встрече в 18:00?" ago:60 actions:@[@"Прочитано"]],
+              [self fakeIdent:@"opcc-test-2" bundle:sms app:@"Сообщения" title:@"Анна" msg:@"Не забудь взять документы" ago:120 actions:@[@"Прочитано"]],
+              [self fakeIdent:@"opcc-test-3" bundle:sms app:@"Сообщения" title:@"Дима" msg:@"Скинул фото с поездки 📷" ago:480 actions:@[@"Прочитано"]],
+              [self fakeIdent:@"opcc-test-4" bundle:sms app:@"Сообщения" title:@"Рабочий чат" msg:@"Максим: созвон перенесли на 15:30, всем быть на связи." ago:840 actions:@[@"Прочитано"]],
+              [self fakeIdent:@"opcc-test-5" bundle:sms app:@"Сообщения" title:@"Мама" msg:@"Позвони, когда освободишься" ago:2400 actions:@[@"Прочитано"]],
+              [self fakeIdent:@"opcc-test-6" bundle:@"com.apple.mobilemail" app:@"Почта" title:@"Расписание на следующую неделю"
+                          msg:@"Добрый день! Отправляю обновлённое расписание: в понедельник планёрка в 11:00, во вторник демонстрация нового релиза для клиентов, в четверг — ретроспектива и планирование спринта. Просьба подтвердить участие до пятницы и подготовить краткий отчёт по задачам." ago:1500 actions:@[@"Архивировать", @"Отметить"]],
+              [self fakeIdent:@"opcc-test-7" bundle:@"com.apple.mobilecal" app:@"Календарь" title:@"Через 15 минут: Планёрка" msg:@"Переговорная 2, 11:00–11:30" ago:180 actions:@[@"Отложить"]],
+              [self fakeIdent:@"opcc-test-8" bundle:@"com.apple.reminders" app:@"Напоминания" title:@"Купить продукты" msg:@"Молоко, хлеб, яйца" ago:3600 actions:@[@"Выполнено"]],
+              [self fakeIdent:@"opcc-test-9" bundle:@"com.apple.weather" app:@"Погода" title:@"Дождь через 20 минут" msg:@"Возьмите зонт — ожидаются осадки." ago:7200 actions:@[]],
+              [self fakeIdent:@"opcc-test-10" bundle:@"com.apple.Preferences" app:@"Настройки" title:@"Доступно обновление iOS" msg:@"Установите обновление, чтобы получить последние улучшения безопасности." ago:90000 actions:@[]],
+            ]];
+            [a sortUsingComparator:^NSComparisonResult(OPCCNotif *x, OPCCNotif *y) { return [y.date compare:x.date]; }];
+        }
+    }
+    [self changed];
+}
 + (void)runAction:(id)act {
+    if ([act isKindOfClass:[OPCCFakeAction class]]) {          // тестовое действие: убираем уведомление, как «Прочитано»
+        NSString *ident = ((OPCCFakeAction *)act).ownerIdent;
+        @synchronized (self) { NSMutableArray *a = [self items]; for (NSInteger i = (NSInteger)a.count - 1; i >= 0; i--) if ([((OPCCNotif *)a[i]).ident isEqualToString:ident]) [a removeObjectAtIndex:i]; }
+        [self changed]; return;
+    }
     @try {
         id runner = KV(act, @"actionRunner"); SEL s = NSSelectorFromString(@"executeAction:fromOrigin:endpoint:withParameters:completion:");
         if (act && runner && [runner respondsToSelector:s]) ((void (*)(id, SEL, id, id, id, id, id))objc_msgSend)(runner, s, act, nil, nil, nil, nil);

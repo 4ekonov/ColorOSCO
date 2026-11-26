@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <dlfcn.h>
 #import "OPCCView.h"
 #import "OPCCActions.h"
 #import "OPCCNotifications.h"
@@ -33,7 +34,18 @@ static void OPCCDumpNames(void) {
     }
     free(cl); [o writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
+static void OPCCDumpNames2(void) {
+    NSString *path = @"/var/mobile/Documents/OPCC_classes2.txt";
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return;
+    unsigned n = 0; Class *cl = objc_copyClassList(&n); NSMutableString *o = [NSMutableString string];
+    for (unsigned i = 0; i < n; i++) {
+        NSString *nm = NSStringFromClass(cl[i]);
+        if ([nm containsString:@"Banner"] || [nm hasPrefix:@"PL"] || [nm hasPrefix:@"NCNotification"] || [nm containsString:@"CoverSheet"] || [nm hasPrefix:@"CSNotification"]) [o appendFormat:@"%@\n", nm];
+    }
+    free(cl); [o writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
 static void OPCCDump(void) {
+    OPCCDumpNames2();
     OPCCDumpNames();
     NSString *path = @"/var/mobile/Documents/OPCC_methods.txt";
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) return;
@@ -282,7 +294,10 @@ static void OPCCInstallStrips(void) {
     OPCCLog(@"полосы жестов установлены");
     [OPCCNotifPanel setOnHide:^{ OPCCHideCoverWindows(NO); }];
     [NSTimer scheduledTimerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *tm) {          // уведомления на экране блокировки
+        [OPCCActions syncPrefs]; [OPCCNotifStore setTestMode:[OPCCActions boolPref:@"testNotifs" def:NO]];
         BOOL lk = OPCCLocked(); [OPCCNotifPanel updateLockOverlayLocked:lk];
+        static int lastState = -1; int st = (lk ? 1 : 0) | ([OPCCNotifPanel lockOverlayVisible] ? 2 : 0);
+        if (st != lastState) { lastState = st; OPCCLog([NSString stringWithFormat:@"экран блокировки: locked=%d наш список виден=%d (уведомлений в хранилище: %lu)", lk, [OPCCNotifPanel lockOverlayVisible], (unsigned long)[OPCCNotifStore all].count]); }
         OPCCHideStockNotifList(lk && [OPCCNotifPanel lockOverlayVisible]);
     }];
     OPCCEnforceTop();
@@ -416,3 +431,12 @@ static void OPCCStyleCard(UIView *v) {
 }
 
 %end
+
+#pragma mark - инициализация
+// Классы уведомлений лежат в приватных фреймворках, которые могут быть ещё не загружены к моменту старта твика —
+// тогда хуки на них молча не ставились (поэтому стиль не применялся к баннерам и экрану блокировки).
+%ctor {
+    NSArray *fw = @[@"UserNotificationsKit", @"UserNotificationsUIKit", @"PlatterKit", @"MaterialKit", @"CoverSheet", @"BannerKit", @"SpringBoardUIServices", @"ControlCenterUI"];
+    for (NSString *n in fw) dlopen([[NSString stringWithFormat:@"/System/Library/PrivateFrameworks/%@.framework/%@", n, n] UTF8String], RTLD_LAZY);
+    %init;
+}

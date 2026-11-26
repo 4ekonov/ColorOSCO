@@ -16,6 +16,8 @@ extern NSString *const OPCCNotifsChanged;
 + (void)withdraw:(id)request;
 + (void)clear:(OPCCNotif *)n;
 + (void)clearAll;
++ (BOOL)testMode;
++ (void)setTestMode:(BOOL)on;       // тестовые уведомления для проверки всех функций
 + (void)runAction:(id)action;          // выполнить действие уведомления
 + (void)openNotif:(OPCCNotif *)n;      // открыть уведомление (действие по умолчанию или приложение)
 @end
