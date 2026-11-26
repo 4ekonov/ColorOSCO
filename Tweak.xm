@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <dlfcn.h>
+#import <QuartzCore/QuartzCore.h>
 #import "OPCCView.h"
 #import "OPCCActions.h"
 #import "OPCCNotifications.h"
@@ -199,23 +200,74 @@ static void OPCCHideCoverWindows(BOOL hide) {
     }
 }
 static void OPCCWalk(UIView *v, void (^blk)(UIView *)) { blk(v); for (UIView *s in v.subviews) OPCCWalk(s, blk); }
-// Прячем стандартный список уведомлений на экране блокировки, пока поверх него наш
-static void OPCCHideStockNotifList(BOOL hide) {
-    static BOOL wasHidden = NO;
-    if (!hide && !wasHidden) return;
+static NSArray *OPCCAllWindows(void) {
     NSArray *wins = nil; SEL ws = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
     if ([UIWindow respondsToSelector:ws]) wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)([UIWindow class], ws, YES, NO);
-    if (!wins) wins = [UIApplication sharedApplication].windows;
-    __block int hits = 0;
-    for (UIWindow *w in wins) {
-        if (w == gStrip || w == gStripN) continue;
+    return wins ?: [UIApplication sharedApplication].windows;
+}
+// Стандартный список уведомлений на экране блокировки (самый большой NCNotificationList* scroll/collection view)
+static UIView *OPCCFindStockList(void) {
+    __block UIView *best = nil; __block CGFloat bestA = 0;
+    for (UIWindow *w in OPCCAllWindows()) {
+        NSString *wc = NSStringFromClass([w class]); if ([wc hasPrefix:@"OPCC"] || w == gStrip || w == gStripN) continue;
         OPCCWalk(w, ^(UIView *v) {
             NSString *c = NSStringFromClass([v class]);
-            if ([c containsString:@"NCNotificationList"] || [c containsString:@"NotificationListView"] || [c containsString:@"NotificationStructuredList"]) { v.alpha = hide ? 0 : 1; hits++; }
+            if ([c containsString:@"NCNotificationList"] && [v isKindOfClass:[UIScrollView class]]) { CGFloat a = v.bounds.size.width * v.bounds.size.height; if (a > bestA) { bestA = a; best = v; } }
         });
     }
-    if (hide && !wasHidden) OPCCLog([NSString stringWithFormat:@"стандартный список уведомлений скрыт, найдено видов: %d", hits]);
-    wasHidden = hide;
+    return best;
+}
+static __weak UIView *gStockList; static BOOL gStockHidden;
+static void OPCCHideStockNotifList(BOOL hide) {
+    if (hide) {
+        UIView *v = OPCCFindStockList();
+        if (v) { if (v.alpha != 0) v.alpha = 0; if (!gStockHidden) OPCCLog([NSString stringWithFormat:@"стандартный список скрыт: %@", NSStringFromClass([v class])]); gStockList = v; gStockHidden = YES; }
+    } else if (gStockHidden) { gStockList.alpha = 1; gStockHidden = NO; }
+}
+// Наш список на экране блокировки встраиваем прямо в иерархию экрана блокировки поверх стандартного (а не в отдельное окно — оно оказывалось под ним)
+static void OPCCLockTick(void) {
+    BOOL lk = OPCCLocked();
+    BOOL want = lk && [OPCCNotifStore all].count > 0 && [OPCCActions boolPref:@"customNotifications" def:YES] && [OPCCActions boolPref:@"lockNotifications" def:YES];
+    if (!want) { [OPCCNotifPanel detachLockList]; OPCCHideStockNotifList(NO); return; }
+    UIView *stock = OPCCFindStockList();
+    if (stock.superview) { [OPCCNotifPanel attachLockListTo:stock.superview above:stock]; OPCCHideStockNotifList(YES); }
+    else OPCCHideStockNotifList(NO);          // не нашли стандартный список — ничего не прячем
+}
+// Стандартные баннеры-капсулы прячем: вместо них показываем свои
+static void OPCCBannerTick(void) {
+    if (![OPCCActions boolPref:@"customNotifications" def:YES] || ![OPCCActions boolPref:@"customBanners" def:YES]) return;
+    for (UIWindow *w in OPCCAllWindows()) {
+        NSString *c = NSStringFromClass([w class]), *rc = w.rootViewController ? NSStringFromClass([w.rootViewController class]) : @"";
+        if ([c hasPrefix:@"OPCC"] || w == gStrip || w == gStripN) continue;
+        if ([c containsString:@"Banner"] || [rc containsString:@"Banner"]) {
+            if (w.alpha != 0) { w.alpha = 0; OPCCLog([NSString stringWithFormat:@"стандартный баннер скрыт: окно %@ / %@", c, rc]); }
+        }
+    }
+}
+static BOOL OPCCCoverAny(void) {
+    id c = [objc_getClass("SBCoverSheetPresentationManager") sharedInstance];
+    for (NSString *n in @[@"isPresented", @"isVisible", @"isInTransition", @"isTransitioning"]) {
+        SEL s = NSSelectorFromString(n);
+        if ([c respondsToSelector:s] && ((BOOL (*)(id, SEL))objc_msgSend)(c, s)) return YES;
+    }
+    return NO;
+}
+// Следим за стандартной шторкой уведомлений: она открывается и в приложениях (там наша полоса касаний не работает) — перехватываем и подменяем нашей
+static CFTimeInterval gUnlockedAt = 0; static BOOL gWasLocked = YES, gStockSeen = NO;
+static void OPCCWatch(void) {
+    BOOL lk = OPCCLocked();
+    if (lk) { gWasLocked = YES; return; }
+    [OPCCNotifPanel detachLockList];                 // разблокировали — наш список на экране блокировки сразу убираем
+    if (gWasLocked) { gWasLocked = NO; gUnlockedAt = CACurrentMediaTime(); OPCCHideStockNotifList(NO); }
+    if (![OPCCActions boolPref:@"customNotifications" def:YES]) return;
+    if (CACurrentMediaTime() - gUnlockedAt < 1.8 || gShadeVisible || gDismissing) return;   // сразу после разблокировки шторка тоже «в переходе»
+    BOOL any = OPCCCoverAny();
+    if (any && !gStockSeen && ![OPCCNotifPanel isShown]) { gStockSeen = YES; OPCCHideCoverWindows(YES); [OPCCNotifPanel showMasked]; OPCCLog(@"стандартная шторка перехвачена"); }
+    if (any && gStockSeen && OPCCCoverPresented()) {
+        OPCCDismissCover();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [OPCCNotifPanel unmask]; OPCCHideCoverWindows(NO); });
+    }
+    if (!any) { if (gStockSeen) [OPCCNotifPanel unmask]; gStockSeen = NO; }
 }
 
 static void OPCCShowNotifs(void) {
@@ -246,7 +298,6 @@ static void OPCCRescueNotifs(void) {
     _start = [[ts anyObject] locationInView:nil]; _fired = NO;
     [self flash:YES]; OPCCLog([NSString stringWithFormat:@"touchesBegan x=%.0f y=%.0f", _start.x, _start.y]);
     if (_kind == 1 && OPCCLocked()) { [super touchesBegan:ts withEvent:e]; return; }   // экран блокировки: пусть работает стандартная панель
-    OPCCEnforceTop();
     [super touchesBegan:ts withEvent:e];
 }
 - (void)touchesMoved:(NSSet *)ts withEvent:(UIEvent *)e {
@@ -294,19 +345,14 @@ static void OPCCInstallStrips(void) {
     if (!gStripN && [OPCCActions boolPref:@"customNotifications" def:YES]) gStripN = OPCCMakeStrip(bottom ? CGRectMake(0, 0, W, 28) : CGRectMake(0, 0, W * 0.5, 28), 1, bottom);
     OPCCLog(@"полосы жестов установлены");
     [OPCCNotifPanel setOnHide:^{ OPCCHideCoverWindows(NO); }];
-    [NSTimer scheduledTimerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *tm) {          // уведомления на экране блокировки
+    [NSTimer scheduledTimerWithTimeInterval:0.03 repeats:YES block:^(NSTimer *tm) { OPCCWatch(); }];
+    [NSTimer scheduledTimerWithTimeInterval:0.4 repeats:YES block:^(NSTimer *tm) {
         [OPCCActions syncPrefs]; [OPCCNotifStore setTestMode:[OPCCActions boolPref:@"testNotifs" def:NO]];
-        BOOL lk = OPCCLocked(); [OPCCNotifPanel updateLockOverlayLocked:lk];
-        static int lastState = -1; int st = (lk ? 1 : 0) | ([OPCCNotifPanel lockOverlayVisible] ? 2 : 0);
-        if (st != lastState) { lastState = st; OPCCLog([NSString stringWithFormat:@"экран блокировки: locked=%d наш список виден=%d (уведомлений в хранилище: %lu)", lk, [OPCCNotifPanel lockOverlayVisible], (unsigned long)[OPCCNotifStore all].count]); }
-        OPCCHideStockNotifList(lk && [OPCCNotifPanel lockOverlayVisible]);
-    }];
-    OPCCEnforceTop();
-    [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:YES block:^(NSTimer *tm) {       // жесты могут пересоздаваться системой — применяем снова
-        OPCCEnforceTop();
+        OPCCLockTick();
         if (!OPCCCCPresented()) gShadeVisible = NO;
-        if (![OPCCNotifPanel isShown]) OPCCHideCoverWindows(NO);                          // страховка: окно шторки не должно остаться невидимым
+        if (![OPCCNotifPanel isShown]) OPCCHideCoverWindows(NO);                  // страховка: окно шторки не должно остаться невидимым
     }];
+    [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *tm) { OPCCBannerTick(); }];
 }
 
 #pragma mark - сбор уведомлений для своей панели

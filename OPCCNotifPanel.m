@@ -1,6 +1,7 @@
 #import "OPCCNotifications.h"
 #import "OPCCActions.h"
 #import <objc/message.h>
+#import <QuartzCore/QuartzCore.h>
 
 #define W_(w,a) [UIColor colorWithWhite:(w) alpha:(a)]
 
@@ -22,6 +23,15 @@ static NSString *Plural(NSUInteger n, NSString *one, NSString *few, NSString *ma
     if (b >= 2 && b <= 4) return few;
     return many;
 }
+static BOOL IsLocked(void) {
+    id cls = (id)objc_getClass("SBLockScreenManager"); SEL si = NSSelectorFromString(@"sharedInstance");
+    id l = [cls respondsToSelector:si] ? ((id (*)(id, SEL))objc_msgSend)(cls, si) : nil;
+    SEL s = NSSelectorFromString(@"isUILocked");
+    return [l respondsToSelector:s] ? ((BOOL (*)(id, SEL))objc_msgSend)(l, s) : NO;
+}
+static CFTimeInterval gStart;
+__attribute__((constructor)) static void OPCCNotifInit(void) { gStart = CACurrentMediaTime(); }
+
 static UIImage *AppIcon(NSString *b) {
     SEL s = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
     if (!b.length || ![UIImage respondsToSelector:s]) return nil;
@@ -171,13 +181,15 @@ static UIImage *AppIcon(NSString *b) {
 #pragma mark - главный вид панели (и список на экране блокировки)
 @interface OPCCNotifView : UIView <UIGestureRecognizerDelegate>
 - (instancetype)initWithFrame:(CGRect)f lock:(BOOL)lock;
+@property (nonatomic) BOOL startMasked;
+- (void)setMasked:(BOOL)m animated:(BOOL)a;
 - (void)reload;
 - (void)present;
 - (void)closeAnimated:(void (^)(void))done;
 @end
 
 @implementation OPCCNotifView {
-    UIView *_shade, *_bg; UIScrollView *_scroll; UILabel *_dateL, *_emptyL; OPCCNBtn *_bell, *_x;
+    UIView *_shade, *_bg, *_mask; UIScrollView *_scroll; UILabel *_dateL, *_emptyL; OPCCNBtn *_bell, *_x;
     NSMutableArray<OPCCNotifCard *> *_cards; NSMutableSet *_expGroups, *_expMsgs;
     UIPanGestureRecognizer *_panGR; UITapGestureRecognizer *_tapGR;
     BOOL _closing, _panActive, _suppress, _lock; NSInteger _gen; CGFloat _u;
@@ -191,6 +203,7 @@ static UIImage *AppIcon(NSString *b) {
         _shade = [[UIView alloc] initWithFrame:self.bounds]; _shade.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight; [self addSubview:_shade];
         UIVisualEffectView *fx = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterialDark]];
         UIView *dim = [UIView new]; dim.backgroundColor = W_(0, 0.38); [fx.contentView addSubview:dim]; _bg = fx; [_shade addSubview:_bg];
+        _mask = [UIView new]; _mask.backgroundColor = UIColor.blackColor; _mask.alpha = 0; _mask.userInteractionEnabled = NO; [_shade addSubview:_mask];
         _scroll = [OPCCNScroll new]; _scroll.canCancelContentTouches = YES; _scroll.showsVerticalScrollIndicator = NO; _scroll.bounces = NO; _scroll.delaysContentTouches = NO; _scroll.clipsToBounds = lock; [_shade addSubview:_scroll];
         _dateL = [UILabel new]; _dateL.textColor = UIColor.whiteColor; [_shade addSubview:_dateL];
         _emptyL = [UILabel new]; _emptyL.textColor = W_(1, 0.6); _emptyL.numberOfLines = 0; _emptyL.textAlignment = NSTextAlignmentCenter; _emptyL.font = [UIFont systemFontOfSize:12]; _emptyL.hidden = YES; [_shade addSubview:_emptyL];
@@ -264,15 +277,21 @@ static UIImage *AppIcon(NSString *b) {
     if (i == 0) { [self openNotif:n]; return; }
     Hap(); NSInteger k = i - 1; if (k >= 0 && k < (NSInteger)n.actions.count) [OPCCNotifStore runAction:n.actions[k]];
 }
+// Пересборка списка со снимком старого состояния: старое плавно растворяется, новое проявляется — шторка больше не «прыгает»
+- (void)animatedReload:(void (^)(void))change {
+    UIView *snap = [_scroll snapshotViewAfterScreenUpdates:NO];
+    if (snap) { snap.frame = _scroll.frame; snap.userInteractionEnabled = NO; [_shade insertSubview:snap aboveSubview:_scroll]; }
+    change(); [self layoutIfNeeded];
+    for (UIView *c in _cards) c.alpha = 0;
+    [UIView animateWithDuration:0.32 delay:0 options:UIViewAnimationOptionCurveEaseInOut animations:^{ snap.alpha = 0; for (UIView *c in self->_cards) c.alpha = 1; } completion:^(BOOL f) { [snap removeFromSuperview]; }];
+}
 - (void)expandGroup:(OPCCNotifCard *)c {
-    Hap(); NSString *b = ((OPCCNotif *)c.items.firstObject).bundleID ?: @""; [_expGroups addObject:b];
-    [self reload]; [self layoutIfNeeded];
-    for (UIView *k in _cards) { k.alpha = 0; k.transform = CGAffineTransformMakeTranslation(0, -10); }
-    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0 options:0 animations:^{ for (UIView *k in self->_cards) { k.alpha = 1; k.transform = CGAffineTransformIdentity; } } completion:nil];
+    Hap(); NSString *b = ((OPCCNotif *)c.items.firstObject).bundleID ?: @"";
+    [self animatedReload:^{ [self->_expGroups addObject:b]; [self reload]; }];
 }
 - (void)chevron:(OPCCNotifCard *)c {
     Hap(); OPCCNotif *n = c.items.firstObject;
-    if (c.headerOnly || c.chevMode == 2) { [_expGroups removeObject:n.bundleID ?: @""]; [self reload]; [self relayoutAnimated]; return; }
+    if (c.headerOnly || c.chevMode == 2) { NSString *b = n.bundleID ?: @""; [self animatedReload:^{ [self->_expGroups removeObject:b]; [self reload]; }]; return; }
     if ([_expMsgs containsObject:n.ident]) [_expMsgs removeObject:n.ident]; else [_expMsgs addObject:n.ident];
     c.msgExpanded = [_expMsgs containsObject:n.ident]; [self relayoutAnimated];
 }
@@ -359,7 +378,7 @@ static UIImage *AppIcon(NSString *b) {
         return;
     }
     CGFloat top = MAX(self.safeAreaInsets.top, 20), cy = top + 26*u + [OPCCActions topOffset];
-    CGRect full = CGRectMake(0, 0, W, H); _bg.frame = full; ((UIVisualEffectView *)_bg).contentView.subviews.firstObject.frame = full;
+    CGRect full = CGRectMake(0, 0, W, H); _bg.frame = full; _mask.frame = full; ((UIVisualEffectView *)_bg).contentView.subviews.firstObject.frame = full;
     _dateL.frame = CGRectMake(m + 4*u, cy - 10*u, 220*u, 20*u);
     _bell.frame = CGRectMake(W - m - 4*u - 30*u, cy - 15*u, 30*u, 30*u); [_bell viewWithTag:9].frame = _bell.bounds;
     CGFloat sTop = cy + 22*u, sH = H - sTop;
@@ -387,7 +406,12 @@ static UIImage *AppIcon(NSString *b) {
 }
 
 #pragma mark анимации
+- (void)setMasked:(BOOL)m animated:(BOOL)a {
+    void (^b)(void) = ^{ self->_mask.alpha = m ? 0.94 : 0; };
+    a ? [UIView animateWithDuration:0.3 animations:b] : b();
+}
 - (void)present {
+    _mask.alpha = _startMasked ? 0.94 : 0; _startMasked = NO;
     _closing = NO; _panActive = NO; _suppress = NO; _gen++; [_expGroups removeAllObjects]; [_expMsgs removeAllObjects];
     [self reload]; [self setNeedsLayout]; [self layoutIfNeeded];
     CGFloat H = self.bounds.size.height, u = _u;
@@ -407,10 +431,10 @@ static UIImage *AppIcon(NSString *b) {
 }
 @end
 
-#pragma mark - окна: панель и список на экране блокировки
+#pragma mark - панель и список на экране блокировки
 @implementation OPCCNotifPanel
-static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown; static void (^gOnHide)(void);
-static UIWindow *gLockWin; static OPCCNotifView *gLockView;
+static UIWindow *gWin; static OPCCNotifView *gView; static BOOL gShown, gMaskedStart; static void (^gOnHide)(void);
+static OPCCNotifView *gLockView;
 + (BOOL)isShown { return gShown; }
 + (void)setOnHide:(void (^)(void))b { gOnHide = [b copy]; }
 + (void)show {
@@ -421,22 +445,79 @@ static UIWindow *gLockWin; static OPCCNotifView *gLockView;
         gWin.backgroundColor = [UIColor clearColor];
         UIViewController *vc = [UIViewController new]; gView = [[OPCCNotifView alloc] initWithFrame:b]; vc.view = gView; gWin.rootViewController = vc;
     }
+    gView.startMasked = gMaskedStart; gMaskedStart = NO;
     gWin.hidden = NO; [gView present];
 }
++ (void)showMasked { if (gShown) return; gMaskedStart = YES; [self show]; }     // показать с непрозрачной подложкой, пока уходит стандартная шторка
++ (void)unmask { [gView setMasked:NO animated:YES]; }
 + (void)hide {
     if (!gShown) return; gShown = NO;
     [gView closeAnimated:^{ gWin.hidden = YES; if (gOnHide) gOnHide(); }];
 }
-+ (BOOL)lockOverlayVisible { return gLockWin && !gLockWin.hidden; }
-+ (void)updateLockOverlayLocked:(BOOL)locked {
-    BOOL want = locked && [OPCCNotifStore all].count > 0 && [OPCCActions boolPref:@"customNotifications" def:YES] && [OPCCActions boolPref:@"lockNotifications" def:YES];
-    if (want) {
-        if (!gLockWin) {
-            CGRect b = [UIScreen mainScreen].bounds; CGRect f = CGRectMake(0, b.size.height * 0.30, b.size.width, b.size.height * 0.50);
-            gLockWin = [[UIWindow alloc] initWithFrame:f]; gLockWin.windowLevel = 99000;   // выше окна экрана блокировки gLockWin.backgroundColor = [UIColor clearColor];
-            UIViewController *vc = [UIViewController new]; gLockView = [[OPCCNotifView alloc] initWithFrame:gLockWin.bounds lock:YES]; vc.view = gLockView; gLockWin.rootViewController = vc;
-        }
-        if (gLockWin.hidden) { gLockWin.hidden = NO; [gLockView reload]; }
-    } else if (gLockWin && !gLockWin.hidden) gLockWin.hidden = YES;
++ (BOOL)lockOverlayVisible { return gLockView.superview != nil; }
++ (void)attachLockListTo:(UIView *)host above:(UIView *)ref {
+    if (!host.window) return;
+    if (!gLockView) gLockView = [[OPCCNotifView alloc] initWithFrame:CGRectZero lock:YES];
+    CGRect b = [UIScreen mainScreen].bounds, wf = CGRectMake(0, b.size.height * 0.30, b.size.width, b.size.height * 0.50);
+    CGRect f = [host convertRect:wf fromView:nil];
+    BOOL fresh = gLockView.superview != host;
+    if (fresh) { [gLockView removeFromSuperview]; [host insertSubview:gLockView aboveSubview:ref]; }
+    if (!CGRectEqualToRect(gLockView.frame, f)) gLockView.frame = f;
+    gLockView.hidden = NO; gLockView.alpha = 1;
+    if (fresh) [gLockView reload];
+}
++ (void)detachLockList { if (gLockView.superview) [gLockView removeFromSuperview]; }
+@end
+
+#pragma mark - всплывающий баннер-капсула
+@interface OPCCBannerRoot : UIView @end
+@implementation OPCCBannerRoot
+- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { UIView *v = [super hitTest:p withEvent:e]; return v == self ? nil : v; }   // всё, кроме самой капсулы, пропускаем вниз
+@end
+@interface OPCCBannerWindow : UIWindow @end
+@implementation OPCCBannerWindow
+- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { UIView *v = [super hitTest:p withEvent:e]; return (v == self || v == self.rootViewController.view) ? nil : v; }
+@end
+
+@implementation OPCCBanner
+static OPCCBannerWindow *gBWin; static OPCCNotifCard *gBCard; static NSInteger gBGen;
++ (BOOL)isVisible { return gBWin && !gBWin.hidden && gBCard; }
++ (void)show:(OPCCNotif *)n { [self show:n force:NO]; }
++ (void)dismissAnimated:(BOOL)a {
+    OPCCNotifCard *c = gBCard; if (!c) return; gBCard = nil; NSInteger g = ++gBGen;
+    CGFloat h = c.frame.size.height + 60;
+    [UIView animateWithDuration:a ? 0.3 : 0 delay:0 options:UIViewAnimationOptionCurveEaseIn animations:^{ c.transform = CGAffineTransformMakeTranslation(0, -h); c.alpha = 0; } completion:^(BOOL f) {
+        [c removeFromSuperview]; if (g == gBGen && !gBCard) gBWin.hidden = YES; }];
+}
++ (void)show:(OPCCNotif *)n force:(BOOL)force {
+    if (!n || [OPCCNotifPanel isShown] || IsLocked()) return;
+    if (![OPCCActions boolPref:@"customNotifications" def:YES] || ![OPCCActions boolPref:@"customBanners" def:YES]) return;
+    if (!force && (CACurrentMediaTime() - gStart < 15 || -[n.date timeIntervalSinceNow] > 20)) return;     // не показываем «историю», которая загружается при старте
+    if (!gBWin) {
+        CGRect b = [UIScreen mainScreen].bounds;
+        gBWin = [[OPCCBannerWindow alloc] initWithFrame:b]; gBWin.windowLevel = 99500; gBWin.backgroundColor = [UIColor clearColor];
+        UIViewController *vc = [UIViewController new]; vc.view = [[OPCCBannerRoot alloc] initWithFrame:b]; vc.view.backgroundColor = [UIColor clearColor]; gBWin.rootViewController = vc;
+    }
+    if (gBCard) [self dismissAnimated:NO];
+    NSInteger gen = ++gBGen;
+    UIView *root = gBWin.rootViewController.view; CGFloat W = root.bounds.size.width, u = W / 316.;
+    OPCCNotifCard *c = [[OPCCNotifCard alloc] initWithItems:@[n] collapsed:NO mode:0]; c.lockMode = YES;
+    CGFloat w = W - 24*u, h = [c layoutForWidth:w u:u], top = MAX(gBWin.safeAreaInsets.top, 20) + 4*u;
+    c.frame = CGRectMake(12*u, top, w, h); c.layer.shadowColor = UIColor.blackColor.CGColor; c.layer.shadowOpacity = 0.35; c.layer.shadowRadius = 14; c.layer.shadowOffset = CGSizeMake(0, 6);
+    [root addSubview:c]; gBCard = c; gBWin.hidden = NO;
+    __weak OPCCNotifCard *wc = c;
+    c.onTap = ^(OPCCNotifCard *k) { Hap(); [OPCCBanner dismissAnimated:YES]; dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [OPCCNotifStore openNotif:n]; [OPCCNotifStore clear:n]; }); };
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[OPCCBanner class] action:@selector(bannerPan:)]; [c addGestureRecognizer:pan];
+    c.transform = CGAffineTransformMakeTranslation(0, -(h + top + 20)); c.alpha = 1;
+    [UIView animateWithDuration:0.6 delay:0 usingSpringWithDamping:0.78 initialSpringVelocity:0.5 options:UIViewAnimationOptionAllowUserInteraction animations:^{ wc.transform = CGAffineTransformIdentity; } completion:nil];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (gen == gBGen && gBCard == wc) [OPCCBanner dismissAnimated:YES]; });
+}
++ (void)bannerPan:(UIPanGestureRecognizer *)g {
+    OPCCNotifCard *c = (OPCCNotifCard *)g.view; CGFloat ty = MIN(0, [g translationInView:c.superview].y);
+    if (g.state == UIGestureRecognizerStateChanged) c.transform = CGAffineTransformMakeTranslation(0, ty);
+    else if (g.state == UIGestureRecognizerStateEnded || g.state == UIGestureRecognizerStateCancelled) {
+        if (ty < -20 || [g velocityInView:c.superview].y < -300) [self dismissAnimated:YES];
+        else [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0 options:0 animations:^{ c.transform = CGAffineTransformIdentity; } completion:nil];
+    }
 }
 @end

@@ -72,14 +72,17 @@ static BOOL gTest = NO;
         NSString *tt = KS(a, @"title"); if (tt.length && acts.count < 3) [acts addObject:a];
     }
     n.actions = acts; n.defaultAction = KV(r, @"defaultAction");
+    BOOL isNew = NO;
     @synchronized (self) {
         NSMutableArray *a = [self items]; NSUInteger idx = NSNotFound;
         for (NSUInteger i = 0; i < a.count; i++) if ([((OPCCNotif *)a[i]).ident isEqualToString:ident]) { idx = i; break; }
+        isNew = (idx == NSNotFound);
         if (idx != NSNotFound) a[idx] = n; else [a addObject:n];
         [a sortUsingComparator:^NSComparisonResult(OPCCNotif *x, OPCCNotif *y) { return [y.date compare:x.date]; }];
     }
     NLog([NSString stringWithFormat:@"+ %@ | %@ | %@ | %@", bundle, n.appName, n.title, n.message]);
     [self changed];
+    if (isNew) dispatch_async(dispatch_get_main_queue(), ^{ [OPCCBanner show:n]; });
 }
 + (void)withdraw:(id)r {
     NSString *ident = KS(r, @"notificationIdentifier"); if (!ident.length) return;
@@ -127,6 +130,9 @@ static BOOL gTest = NO;
         }
     }
     [self changed];
+    if (on) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{      // тестовая капсула
+        for (OPCCNotif *n in [self all]) if ([n.ident isEqualToString:@"opcc-test-7"]) { [OPCCBanner show:n force:YES]; break; }
+    });
 }
 + (void)runAction:(id)act {
     if ([act isKindOfClass:[OPCCFakeAction class]]) {          // тестовое действие: убираем уведомление, как «Прочитано»

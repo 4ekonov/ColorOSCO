@@ -29,5 +29,15 @@ extern NSString *const OPCCNotifsChanged;
 + (BOOL)isShown;
 + (void)setOnHide:(void (^)(void))block;   // вызывается, когда панель полностью скрыта
 + (BOOL)lockOverlayVisible;
-+ (void)updateLockOverlayLocked:(BOOL)locked;   // уведомления на экране блокировки
++ (void)attachLockListTo:(UIView *)host above:(UIView *)ref;   // встроить наш список в иерархию экрана блокировки
++ (void)detachLockList;
++ (void)showMasked;     // показать панель с непрозрачной подложкой (пока уходит стандартная шторка)
++ (void)unmask;
+@end
+
+// Всплывающие уведомления (капсулы поверх всего)
+@interface OPCCBanner : NSObject
++ (void)show:(OPCCNotif *)n;
++ (void)show:(OPCCNotif *)n force:(BOOL)force;
++ (BOOL)isVisible;
 @end
